@@ -1,7 +1,11 @@
 atm_train/attacker_build_data/datasets
 atm_train/attacker_build_data/pretrained_models
 README.md
+atm_train/generator_sft/arrows/data-00000-of-00001.arrow
+atm_train/attacker_build_data/triviaqa_small_fab.jsonl
+atm_train/attacker_dpo/triviaqa_small.jsonl
 atm_train/generator_sft/inarr.jsonl
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
