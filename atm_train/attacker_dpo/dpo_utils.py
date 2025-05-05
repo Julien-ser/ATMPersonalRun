@@ -1,5 +1,127 @@
 import numpy as np
 from trl.trainer.dpo_trainer import *
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset
+from contextlib import contextmanager
+from tqdm import tqdm
+import deepspeed
+from copy import deepcopy
+from functools import partial
+from collections import defaultdict
+from peft import (
+    PeftModel, 
+    prepare_model_for_kbit_training, 
+    get_peft_model, 
+)
+#from peft.utils.other import peft_module_casting_to_bf16 
+import inspect
+from contextlib import nullcontext
+from typing import (
+    Optional, List, Tuple, Union, Dict, 
+    Tuple, Literal, Callable
+    )
+from transformers import (
+    AutoModelForCausalLM,
+    TrainingArguments,
+    Trainer,
+    PreTrainedModel, 
+    PreTrainedTokenizerBase, 
+    TrainingArguments, 
+    TrainerCallback,
+    DataCollatorForSeq2Seq,
+    PreTrainedModel,
+   # PreTrainedModelWrapper,
+)
+from transformers.data.data_collator import DataCollator
+from torch.utils.data import DataLoader, Dataset
+from transformers.trainer_utils import EvalLoopOutput
+from functools import wraps
+#from trl.trainer.utils import trl_sanitize_kwargs_for_tagging
+import random
+import wandb
+import warnings
+from accelerate import PartialState
+from transformers.utils import is_peft_available
+from transformers.integrations import is_wandb_available
+
+def pad_to_length(tensor: torch.Tensor, length: int, pad_value: int, dim: int = -1) -> torch.Tensor:
+    """Pad a tensor to a given length on a given dimension."""
+    if tensor.size(dim) >= length:
+        return tensor
+    pad_size = list(tensor.size())
+    pad_size[dim] = length - tensor.size(dim)
+    return torch.cat([tensor, pad_value * torch.ones(*pad_size, dtype=tensor.dtype, device=tensor.device)], dim=dim)
+
+def disable_dropout_in_model(model: torch.nn.Module) -> None:
+    """Disable dropout in a model."""
+    for module in model.modules():
+        if isinstance(module, torch.nn.Dropout):
+            module.p = 0
+
+def create_reference_model(model: PreTrainedModel) -> PreTrainedModel:
+    """Create a reference model from the given model."""
+    model_ref = deepcopy(model)
+    # Freeze reference model parameters
+    for param in model_ref.parameters():
+        param.requires_grad = False
+    return model_ref
+
+class DPODataCollatorWithPadding:
+    def __init__(
+        self,
+        pad_token_id: int,
+        label_pad_token_id: int = -100,
+        is_encoder_decoder: bool = False,
+    ):
+        self.pad_token_id = pad_token_id
+        self.label_pad_token_id = label_pad_token_id
+        self.is_encoder_decoder = is_encoder_decoder
+
+    def __call__(self, features: List[Dict[str, Union[torch.Tensor, int]]]) -> Dict[str, Union[torch.Tensor, int]]:
+        # First, find the longest sequence in the batch
+        max_length = max(
+            [
+                len(feature["chosen_input_ids"])
+                if "chosen_input_ids" in feature
+                else len(feature["prompt_input_ids"])
+                for feature in features
+            ]
+        )
+
+        batch = {}
+        for k in features[0].keys():
+            if k.endswith("_input_ids") or k.endswith("_attention_mask"):
+                # Pad all input_ids and attention_mask features
+                batch[k] = torch.stack(
+                    [
+                        pad_to_length(
+                            torch.tensor(feature[k], dtype=torch.long),
+                            max_length,
+                            self.pad_token_id if k.endswith("_input_ids") else 0,
+                        )
+                        for feature in features
+                    ]
+                )
+            elif k.endswith("_labels"):
+                # Pad all labels
+                batch[k] = torch.stack(
+                    [
+                        pad_to_length(
+                            torch.tensor(feature[k], dtype=torch.long),
+                            max_length,
+                            self.label_pad_token_id,
+                        )
+                        for feature in features
+                    ]
+                )
+            else:
+                # Pass through other features
+                batch[k] = torch.tensor([feature[k] for feature in features])
+        print(f"[Collator] Batch type: {type(batch)}")  # Should be Dict
+        print(f"[Collator] Batch keys: {batch.keys()}")
+        return batch
 
 truncation_mode = 'keep_end'
 label_pad_token_id = -100
@@ -265,7 +387,7 @@ class DPOTrainer(Trainer):
         label_smoothing: float = 0,
         loss_type: Literal["sigmoid", "hinge", "ipo", "kto_pair"] = "sigmoid",
         args: Optional[TrainingArguments] = None,
-        data_collator: Optional[DataCollator] = None,
+        data_collator: Optional[DataCollatorForSeq2Seq] = None,
         label_pad_token_id: int = -100,
         padding_value: Optional[int] = None,
         truncation_mode: str = "keep_end",
@@ -366,7 +488,7 @@ class DPOTrainer(Trainer):
             # get peft model with the given config
             model = get_peft_model(model, peft_config)
             if args.bf16 and getattr(model, "is_loaded_in_4bit", False):
-                peft_module_casting_to_bf16(model)
+                #peft_module_casting_to_bf16(model)
                 # If args.bf16 we need to explicitly call `generate` with torch amp autocast context manager
                 self._peft_has_been_casted_to_bf16 = True
 
@@ -538,7 +660,7 @@ class DPOTrainer(Trainer):
             else:
                 self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
 
-    def _prepare_deepspeed(self, model: PreTrainedModelWrapper):
+    def _prepare_deepspeed(self, model: torch.nn.Module):#PreTrainedModelWrapper):
         # Adapted from accelerate: https://github.com/huggingface/accelerate/blob/739b135f8367becb67ffaada12fe76e3aa60fefd/src/accelerate/accelerator.py#L1473
         deepspeed_plugin = self.accelerator.state.deepspeed_plugin
         config_kwargs = deepcopy(deepspeed_plugin.deepspeed_config)
@@ -919,9 +1041,12 @@ class DPOTrainer(Trainer):
         concatenated_batch = {}
 
         if is_encoder_decoder:
-            max_length = max(batch["chosen_labels"].shape[1], batch["rejected_labels"].shape[1])
+            #max_length = max(batch["chosen_labels"].shape[1], batch["rejected_labels"].shape[1])
+            max_length = max(len(batch["chosen_labels"]), len(batch["rejected_labels"]))
         else:
-            max_length = max(batch["chosen_input_ids"].shape[1], batch["rejected_input_ids"].shape[1])
+            #max_length = max(batch["chosen_input_ids"].shape[1], batch["rejected_input_ids"].shape[1])
+            max_length = max(len(batch["chosen_input_ids"]), len(batch["rejected_input_ids"]))
+
 
         for k in batch:
             if k.startswith("chosen") and isinstance(batch[k], torch.Tensor):
@@ -1082,6 +1207,7 @@ class DPOTrainer(Trainer):
 
         We do this to avoid doing two forward passes, because it's faster for FSDP.
         """
+
         concatenated_batch = self.concatenated_inputs(
             batch,
             is_encoder_decoder=self.is_encoder_decoder,
@@ -1128,6 +1254,8 @@ class DPOTrainer(Trainer):
         batch: Dict[str, Union[List, torch.LongTensor]],
         train_eval: Literal["train", "eval"] = "train",
     ):
+        with open("debug_batch_loss_met.txt", "w") as f:
+            f.write(str(batch))
         """Compute the DPO loss and other metrics for the given batch of inputs for train or test."""
         metrics = {}
 
@@ -1183,9 +1311,15 @@ class DPOTrainer(Trainer):
     def compute_loss(
         self,
         model: Union[PreTrainedModel, nn.Module],
-        inputs: Dict[str, Union[torch.Tensor, Any]],
+        inputs: Dict[str, torch.Tensor],  # if all values are expected to be tensors
         return_outputs=False,
+        **kwargs
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, torch.Tensor]]]:
+        print("Type of inputs:", type(inputs))  # Should be Dict[str, torch.Tensor]
+        print("Keys in inputs:", inputs.keys())  # Should include 'chosen_input_ids', etc.
+        print("Shape of chosen_input_ids:", inputs["chosen_input_ids"].shape)
+        with open("debug_batch_inputs.txt", "w") as f:
+            f.write(str(inputs))
         if not self.use_dpo_data_collator:
             warnings.warn(
                 "compute_loss is only implemented for DPODataCollatorWithPadding, and you passed a datacollator that is different than "
@@ -1206,7 +1340,7 @@ class DPOTrainer(Trainer):
             return (loss, metrics)
         return loss
 
-    def get_batch_samples(self, model, batch: Dict[str, torch.LongTensor]) -> Tuple[str, str]:
+    '''def get_batch_samples(self, model, batch: Dict[str, torch.LongTensor]) -> Tuple[str, str]:
         """Generate samples from the model and reference model for the given batch of inputs."""
 
         # If one uses `generate_during_eval` with peft + bf16, we need to explicitly call generate with
@@ -1250,12 +1384,63 @@ class DPOTrainer(Trainer):
         reference_output = pad_to_length(reference_output, self.max_length, self.tokenizer.pad_token_id)
         reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
 
+        return policy_output_decoded, reference_output_decoded'''
+    
+    def get_batch_samples(self, batch: Dict[str, torch.Tensor], *args, **kwargs) -> Tuple[str, str]:
+        """Generate samples from the model and reference model for the given batch of inputs."""
+       
+        # Debug: Print all received arguments
+        import inspect
+        frame = inspect.currentframe()
+        args, _, _, values = inspect.getargvalues(frame)
+        print("Arguments received:", {arg: values[arg] for arg in args})
+        if hasattr(batch, '__iter__') and not isinstance(batch, dict):
+            batch = next(batch)  # Get first item from generator
+    
+        print(f"Actual batch type: {type(batch)}")  # Verify it's now a dict
+        print(f"Batch keys: {batch.keys()}")  # Check available keys
+        generate_context_manager = nullcontext if not self._peft_has_been_casted_to_bf16 else torch.cuda.amp.autocast
+
+        with generate_context_manager():
+            policy_output = self.model.generate(
+                input_ids=batch["prompt_input_ids"],
+                attention_mask=batch["prompt_attention_mask"],
+                max_length=self.max_length,
+                do_sample=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+            )
+
+            if self.ref_model is None:
+                with self.null_ref_context():
+                    reference_output = self.model.generate(
+                        input_ids=batch["prompt_input_ids"],
+                        attention_mask=batch["prompt_attention_mask"],
+                        max_length=self.max_length,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                    )
+            else:
+                reference_output = self.ref_model.generate(
+                    input_ids=batch["prompt_input_ids"],
+                    attention_mask=batch["prompt_attention_mask"],
+                    max_length=self.max_length,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                )
+
+        policy_output = pad_to_length(policy_output, self.max_length, self.tokenizer.pad_token_id)
+        policy_output_decoded = self.tokenizer.batch_decode(policy_output, skip_special_tokens=True)
+
+        reference_output = pad_to_length(reference_output, self.max_length, self.tokenizer.pad_token_id)
+        reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
+
         return policy_output_decoded, reference_output_decoded
 
     def prediction_step(
         self,
         model: Union[PreTrainedModel, nn.Module],
-        inputs: Dict[str, Union[torch.Tensor, Any]],
+        inputs: Dict[str, torch.Tensor],  # if all values are expected to be tensors
+
         prediction_loss_only: bool,
         ignore_keys: Optional[List[str]] = None,
     ):
@@ -1296,6 +1481,56 @@ class DPOTrainer(Trainer):
         for key, value in metrics.items():
             self._stored_metrics[train_eval][key].append(value)
 
+    '''def evaluation_loop(
+        self,
+        dataloader: DataLoader,
+        description: str,
+        prediction_loss_only: Optional[bool] = None,
+        ignore_keys: Optional[List[str]] = None,
+        metric_key_prefix: str = "eval",
+    ) -> EvalLoopOutput:
+        """
+        Overriding built-in evaluation loop to store metrics for each batch.
+        Prediction/evaluation loop, shared by `Trainer.evaluate()` and `Trainer.predict()`.
+
+        Works both with or without labels.
+        """
+
+        # Sample and save to game log if requested (for one batch to save time)
+        if self.generate_during_eval:
+            # Generate random indices within the range of the total number of samples
+            num_samples = len(dataloader.dataset)
+            random_indices = random.sample(range(num_samples), k=self.args.eval_batch_size)
+
+            # Use dataloader.dataset.select to get the random batch without iterating over the DataLoader
+            random_batch_dataset = dataloader.dataset.select(random_indices)
+            random_batch = self.data_collator(random_batch_dataset)
+            random_batch = self._prepare_inputs(random_batch)
+            
+            policy_output_decoded, ref_output_decoded = self.get_batch_samples(self.model, random_batch)
+
+            self.log(
+                {
+                    "game_log": wandb.Table(
+                        columns=["Prompt", "Policy", "Ref Model"],
+                        rows=[
+                            [prompt, pol[len(prompt) :], ref[len(prompt) :]]
+                            for prompt, pol, ref in zip(
+                                random_batch["prompt"], policy_output_decoded, ref_output_decoded
+                            )
+                        ],
+                    )
+                }
+            )
+            self.state.log_history.pop()
+
+        # Base evaluation
+        initial_output = super().evaluation_loop(
+            dataloader, description, prediction_loss_only, ignore_keys, metric_key_prefix
+        )
+
+        return initial_output'''
+    
     def evaluation_loop(
         self,
         dataloader: DataLoader,
@@ -1322,7 +1557,8 @@ class DPOTrainer(Trainer):
             random_batch = self.data_collator(random_batch_dataset)
             random_batch = self._prepare_inputs(random_batch)
 
-            policy_output_decoded, ref_output_decoded = self.get_batch_samples(self.model, random_batch)
+            #policy_output_decoded, ref_output_decoded = self.get_batch_samples(self.model, random_batch)
+            policy_output_decoded, ref_output_decoded = self.get_batch_samples(random_batch)
 
             self.log(
                 {
@@ -1368,6 +1604,6 @@ class DPOTrainer(Trainer):
         Overwrite the `push_to_hub` method in order to force-add the tag "dpo" when pushing the
         model on the Hub. Please refer to `~transformers.Trainer.push_to_hub` for more details.
         """
-        kwargs = trl_sanitze_kwargs_for_tagging(model=self.model, tag_names=self._tag_names, kwargs=kwargs)
+        #kwargs = trl_sanitize_kwargs_for_tagging(model=self.model, tag_names=self._tag_names, kwargs=kwargs)
 
         return super().push_to_hub(commit_message=commit_message, blocking=blocking, **kwargs)

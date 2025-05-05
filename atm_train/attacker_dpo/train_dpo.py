@@ -8,7 +8,7 @@ import torch
 import transformers
 import numpy as np
 from accelerate import Accelerator
-from dpo_utils import tokenize_row, DPOTrainer
+from dpo_utils import tokenize_row, DPOTrainer, DPODataCollatorWithPadding
 import argparse
 from transformers import (
     AutoModelForCausalLM,
@@ -82,7 +82,8 @@ def main():
     accelerator = Accelerator()
     
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-    tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     path = Path(args.train_data)
     if path.is_dir():
@@ -103,6 +104,7 @@ def main():
 
     model_kwargs = dict(
         torch_dtype=torch_dtype,
+        use_cache=False,
     )
 
     model = args.model_name_or_path
@@ -129,6 +131,7 @@ def main():
         deepspeed=args.deepspeed_file,
         lr_scheduler_type=args.lr_scheduler_type,
         warmup_ratio=args.warmup_ratio,
+        remove_unused_columns=False,
     )
 
     #########################
@@ -147,13 +150,17 @@ def main():
         max_length=args.max_length,
         max_prompt_length=args.max_prompt_length,
         dataset_num_proc=8,
-        # data_collator=MITODataCollatorWithPadding()
+        data_collator=DPODataCollatorWithPadding(
+            pad_token_id=tokenizer.pad_token_id,
+            label_pad_token_id=-100,
+            is_encoder_decoder=False
+        ),
     )
 
     ###############
     # Training loop
     ###############
-    train_result = trainer.train()
+    trainer.train()
 
     # spin_trainer.save_state()
     ##################################

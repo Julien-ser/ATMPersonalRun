@@ -18,7 +18,7 @@ from datasets import Dataset
 from torch.utils.data import DataLoader
 from transformers import (
     AutoModelForCausalLM,
-    DataCollator,
+    DataCollatorForSeq2Seq,
     PreTrainedModel,
     PreTrainedTokenizerBase,
     Trainer,
@@ -26,20 +26,27 @@ from transformers import (
 )
 from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import EvalLoopOutput
-from trl import DPOTrainer
 from peft import PeftModel, get_peft_model, prepare_model_for_kbit_training
 
-from trl.import_utils import is_peft_available, is_wandb_available
-from trl.models import PreTrainedModelWrapper, create_reference_model
-from trl.trainer.utils import (
-    DPODataCollatorWithPadding,
-    disable_dropout_in_model,
-    pad_to_length,
-    peft_module_casting_to_bf16,
-    trl_sanitze_kwargs_for_tagging,
-)
+from transformers.utils import is_peft_available
+from transformers.integrations import is_wandb_available
 from dataclasses import dataclass
+from dpo_utils4mito import tokenize_row, DPOTrainer, DPODataCollatorWithPadding, pad_to_length
 
+def disable_dropout_in_model(model: torch.nn.Module) -> None:
+    """Disable dropout in a model."""
+    for module in model.modules():
+        if isinstance(module, torch.nn.Dropout):
+            module.p = 0
+
+
+def create_reference_model(model: PreTrainedModel) -> PreTrainedModel:
+    """Create a reference model from the given model."""
+    model_ref = deepcopy(model)
+    # Freeze reference model parameters
+    for param in model_ref.parameters():
+        param.requires_grad = False
+    return model_ref
 
 class MITOTrainer(DPOTrainer):
     def __init__(
@@ -50,7 +57,7 @@ class MITOTrainer(DPOTrainer):
         label_smoothing: float = 0,
         loss_type: Literal["sigmoid", "hinge", "ipo", "kto_pair"] = "sigmoid",
         args: Optional[TrainingArguments] = None,
-        data_collator: Optional[DataCollator] = None,
+        data_collator: Optional[DataCollatorForSeq2Seq] = None,
         label_pad_token_id: int = -100,
         padding_value: Optional[int] = None,
         truncation_mode: str = "keep_end",
@@ -150,10 +157,10 @@ class MITOTrainer(DPOTrainer):
 
             # get peft model with the given config
             model = get_peft_model(model, peft_config)
-            if args.bf16 and getattr(model, "is_loaded_in_4bit", False):
-                peft_module_casting_to_bf16(model)
+            #if args.bf16 and getattr(model, "is_loaded_in_4bit", False):
+            #    peft_module_casting_to_bf16(model)
                 # If args.bf16 we need to explicitly call `generate` with torch amp autocast context manager
-                self._peft_has_been_casted_to_bf16 = True
+            #    self._peft_has_been_casted_to_bf16 = True
 
         # For models that use gradient_checkpointing, we need to attach a hook that enables input
         # to explicitly have `requires_grad=True`, otherwise training will either silently
@@ -222,6 +229,7 @@ class MITOTrainer(DPOTrainer):
 
         if data_collator is None:
             data_collator = DPODataCollatorWithPadding(
+                tokenizer=tokenizer,
                 pad_token_id=tokenizer.pad_token_id,
                 label_pad_token_id=label_pad_token_id,
                 is_encoder_decoder=self.is_encoder_decoder,
@@ -536,6 +544,49 @@ class MITOTrainer(DPOTrainer):
         kl_loss = self.kldiv_loss(pred_prob, tar_prob)
         
         return kl_loss
+
+    @staticmethod
+    def concatenated_inputs(
+        batch: Dict[str, Union[List, torch.LongTensor]],
+        is_encoder_decoder: bool = False,
+        label_pad_token_id: int = -100,
+        padding_value: int = 0,
+        device: Optional[torch.device] = None,
+    ) -> Dict[str, torch.LongTensor]:
+        """Handle MITO's specific batch format with adversarial prompts"""
+        concatenated_batch = {}
+        
+        # Convert lists to tensors if needed
+        def ensure_tensor(data):
+            if isinstance(data, list):
+                return torch.tensor(data)
+            return data
+            
+        # Get max length considering both chosen and rejected
+        chosen_inputs = ensure_tensor(batch["chosen_input_ids"])
+        rejected_inputs = ensure_tensor(batch["rejected_input_ids"])
+        max_length = max(chosen_inputs.shape[1], rejected_inputs.shape[1])
+
+        # Process chosen/rejected pairs
+        for prefix in ["chosen", "rejected"]:
+            for key in ["input_ids", "attention_mask", "labels"]:
+                full_key = f"{prefix}_{key}"
+                if full_key not in batch:
+                    continue
+                    
+                data = ensure_tensor(batch[full_key])
+                pad_value = label_pad_token_id if key == "labels" else padding_value
+                
+                # Pad and concatenate
+                padded = pad_to_length(data, max_length, pad_value)
+                if f"concatenated_{key}" in concatenated_batch:
+                    concatenated_batch[f"concatenated_{key}"] = torch.cat(
+                        [concatenated_batch[f"concatenated_{key}"], padded]
+                    )
+                else:
+                    concatenated_batch[f"concatenated_{key}"] = padded
+
+        return concatenated_batch.to(device=device) if device else concatenated_batch
         
 
 def mito_tokenize_row(feature, tokenizer) -> Dict:
@@ -566,7 +617,7 @@ def mito_tokenize_row(feature, tokenizer) -> Dict:
     answer_encs = tokenizer(answer, add_special_tokens=False)
 
     if not isinstance(answer, str):
-        raise ValueError(f"answer should be an str but got {type(chosen)}")
+        raise ValueError(f"answer should be an str but got {type(answer)}")
 
 
     chosen_tokens = {}

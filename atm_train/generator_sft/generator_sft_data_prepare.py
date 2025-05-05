@@ -50,8 +50,10 @@ shuffle_config = {
 
 def process_data(example, ):
     
-    raw_psgs = example['passages']['passage_text'][:10]
-    selected = example['passages']['is_selected'][:10]
+    #raw_psgs = example['passages']['passage_text'][:10]
+    #selected = example['passages']['is_selected'][:10]
+    raw_psgs = [p['passage_text'] for p in example['passages'][:10]]
+    selected = [p['is_selected'] for p in example['passages'][:10]]
 
     assert len(raw_psgs) == len(selected)
     
@@ -181,11 +183,12 @@ def process_str_to_input_ids(example):
     
 if __name__ == "__main__":
 
-    tokenizer = AutoTokenizer.from_pretrained(f'/path/to/input/pretrained_models/atm_7b')
+#    tokenizer = AutoTokenizer.from_pretrained(f'/path/to/input/pretrained_models/atm_7b')
+    tokenizer = AutoTokenizer.from_pretrained(f'/home/julien/ATM-RAG/atm_train/attacker_build_data/pretrained_models/Mixtral')
     shuffler = Shuffler(shuffle_config)    
 
-    ds = load_dataset('json', data_dir=f'/path/to/input/datasets/generator_sft', split='train') 
-
+    #ds = load_dataset('json', data_dir=f'/path/to/input/datasets/generator_sft', split='train') 
+    ds = load_dataset('json', data_files='inarr.jsonl', split='train')
     ds = ds.map(process_data, remove_columns=ds.column_names, num_proc=8)
 
 
@@ -194,5 +197,5 @@ if __name__ == "__main__":
 
     ds = ds.map(process_str_to_input_ids, remove_columns=ds.column_names, num_proc=8)
 
-    ds.save_to_disk(f'/path/to/input/datasets/attacked_train_fab_for_sft_arrows')
+    ds.save_to_disk('arrows/')#f'/path/to/input/datasets/attacked_train_fab_for_sft_arrows')
     

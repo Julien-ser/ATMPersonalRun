@@ -6,6 +6,10 @@ from vllm import LLM, SamplingParams
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import torch
+torch.cuda.empty_cache()
+torch.cuda.reset_peak_memory_stats()
+import os
 
 example_format = 'TITLE {title} # TEXT {text}'
 
@@ -69,19 +73,27 @@ def call_model_dup(prompts, model, max_new_tokens=50, num_dups=1):
 if __name__ == '__main__':
     args = parse_args()
     ds_name = args.ds_name
-    ds = load_dataset('json', data_files=f'/path/to/input/datasets/{ds_name}.jsonl', split='train')
+    ds = load_dataset('json', data_files=f'datasets/{ds_name}.jsonl', split='train')
     
     ds = ds.map(format_row, num_proc=8, remove_columns=ds.column_names)
     
-    model = LLM(model=args.model_name, tensor_parallel_size=args.world_size, trust_remote_code=True)
+    model = LLM(model=args.model_name, tensor_parallel_size=args.world_size, trust_remote_code=True, swap_space=4)
 
     preds = call_model_dup(ds['prompt'], model, max_new_tokens=args.max_new_tokens, num_dups=NUM_DUPS)
 
-    dest_dir = Path(args.dest_dir)
+    '''dest_dir = Path(args.dest_dir)
     if not dest_dir.exists():
-        dest_dir.mkdir()
+        dest_dir.mkdir()'''
 
     model_name = Path(args.model_name).name
 
-    preds.to_csv((dest_dir / f'{ds_name}_fab.csv').resolve(), index=False)
+    file_path = f'{ds_name}_fab.csv'
+
+    # Save to CSV using the file path string
+    preds.to_csv(file_path, index=False)
+    #absolute_dest_dir = os.path.abspath(args.dest_dir)
+    #print(f"Saving to: {absolute_dest_dir}")
+
+    # Save to CSV using the file path string
+    #preds.to_csv((args.dest_dir / f'{ds_name}_fab.csv').resolve(), index=False)
 

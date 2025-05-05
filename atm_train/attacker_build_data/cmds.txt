@@ -1,0 +1,22 @@
+python3 build_ask_gpt.py \
+--model_name pretrained_models/Mixtral/ \
+--world_size 1 \
+--ds_name triviaqa_small \
+--dest_dir /datasets
+
+python3 fab_merge.py --ds_name triviaqa_small
+
+pip uninstall torch torchvision torchaudio
+
+pip install torch torchvision torchaudio
+
+python3 data_setup_full.py
+
+for full dataset(as per paper)
+python3 build_ask_gpt.py \
+--model_name pretrained_models/MixtralLite/ \
+--world_size 1 \
+--ds_name triviaqa \
+--dest_dir /datasets
+
+python3 fab_merge.py --ds_name triviaqa

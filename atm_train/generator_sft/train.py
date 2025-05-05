@@ -18,15 +18,18 @@ from transformers import (
     LlamaTokenizer,
     DataCollatorForSeq2Seq, 
     set_seed,
-    Seq2SeqTrainingArguments,
-    Seq2SeqTrainer,
+    TrainingArguments,
+    Trainer,
+#    Seq2SeqTrainingArguments,
+#    Seq2SeqTrainer,
 )
 from torch.utils.tensorboard import SummaryWriter
-from transformers.deepspeed import HfDeepSpeedConfig
+from transformers.integrations.deepspeed import HfDeepSpeedConfig
 import deepspeed
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from deepspeed.accelerator import get_accelerator
 
+torch.cuda.empty_cache()
 
 def print_rank_0(msg, rank=0):
     if rank <= 0:
@@ -104,8 +107,8 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
             args.model_name_or_path,
             torch_dtype=torch.bfloat16 if args.bf16 else (torch.float16 if args.fp16 else torch.float32), trust_remote_code=True)
+    model.config.use_cache = False
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
-    
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
     
@@ -120,7 +123,7 @@ def main():
         
     # Show the training loss with every epoch
 
-    training_args = Seq2SeqTrainingArguments(
+    training_args = TrainingArguments(#Seq2SeqTrainingArguments(
         output_dir=args.output_dir,
         save_strategy = "no",
         # do_eval=True,
@@ -139,7 +142,7 @@ def main():
         warmup_ratio=args.warmup_ratio,
     )
     
-    trainer = Seq2SeqTrainer(
+    trainer = Trainer(#Seq2SeqTrainer(
         model,
         training_args,
         train_dataset=train_dataset,

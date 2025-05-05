@@ -1,0 +1,14 @@
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync
+OMP_NUM_THREADS=1 deepspeed --hostfile='hosts.cfg' train.py \
+    --model_name_or_path /home/julien/ATM-RAG/atm_train/attacker_build_data/pretrained_models/Lite \
+    --train_data arrows/ \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
+    --gradient_accumulation_steps 1  \
+    --fp16 \
+    --deepspeed_file ./ds_cfg.json \
+    --output_dir ./experiments/ \
+    --lr_scheduler_type cosine \
+    --num_train_epochs 1 \
+    --learning_rate 5e-6

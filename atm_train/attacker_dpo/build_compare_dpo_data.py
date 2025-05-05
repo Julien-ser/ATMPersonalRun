@@ -55,7 +55,7 @@ if __name__ == '__main__':
     
     ds_name = args.ds_name
     
-    ds = load_dataset('json', data_files=f'/path/to/input/datasets/{ds_name}.jsonl', split='train')
+    ds = load_dataset('json', data_files=f'{ds_name}.jsonl', split='train')
 
     ds = ds.map(format_row, num_proc=8, remove_columns=ds.column_names)
     

@@ -39,7 +39,9 @@ def template_from_file(example):
     item = {}
 
     item['answer'] = example['answers'][0]
-    item['question'] = example['question']
+    example['question'] = example['query']
+    item['query'] = example['query']
+    item['question'] = example['query']
 
     example['input'] = []
     for idx in range(NUM_DUPS):
@@ -94,7 +96,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    accelerator = Accelerator()
+    #accelerator = Accelerator()
     
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
     tokenizer.pad_token = tokenizer.eos_token
@@ -103,16 +105,17 @@ def main():
     model = LlamaPPL.from_pretrained(args.model_name_or_path, torch_dtype=torch.bfloat16)
     ds = load_dataset('json', data_files=args.input_file, split='train')
     
-    with accelerator.main_process_first():
-        ds = ds.map(template_from_file, num_proc=8, remove_columns=ds.column_names)
-        ds = ds.map(format_tokenize_row, fn_kwargs={'tokenizer': tokenizer}, num_proc=8, remove_columns=ds.column_names, batched=True, batch_size=1)
-        print(ds)
+    #with accelerator.main_process_first():
+    ds = ds.map(template_from_file, num_proc=8, remove_columns=ds.column_names)
+    ds = ds.map(format_tokenize_row, fn_kwargs={'tokenizer': tokenizer}, num_proc=8, remove_columns=ds.column_names, batched=True, batch_size=1)
+    print(ds)
 
 
     training_args = Seq2SeqTrainingArguments(
         output_dir="./eval_outdir",
         save_strategy = "no",
         per_device_eval_batch_size=args.per_device_eval_batch_size,
+        fp16=True,
     )
 
     trainer = Seq2SeqTrainer(
@@ -124,7 +127,7 @@ def main():
     )
 
     preds = trainer.predict(ds)
-    accelerator.wait_for_everyone()
+    #accelerator.wait_for_everyone()
     
     preds = preds.predictions[:ds.num_rows].reshape((-1, args.num_dups))
     odf = pd.DataFrame(preds, columns=[f'output_{idx}' for idx in range(args.num_dups)])

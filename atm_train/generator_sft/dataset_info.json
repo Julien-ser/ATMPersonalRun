@@ -1,0 +1,48 @@
+{
+  "builder_name": "json",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "json",
+  "dataset_size": 122014696,
+  "description": "",
+  "download_checksums": {
+    "/home/julien/ATM-RAG/atm_train/generator_sft/inarr.jsonl": {
+      "num_bytes": 126961604,
+      "checksum": null
+    }
+  },
+  "download_size": 126961604,
+  "features": {
+    "input_ids": {
+      "feature": {
+        "dtype": "int32",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    },
+    "labels": {
+      "feature": {
+        "dtype": "int64",
+        "_type": "Value"
+      },
+      "_type": "Sequence"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 248976300,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 122014696,
+      "num_examples": 1000,
+      "dataset_name": "json"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

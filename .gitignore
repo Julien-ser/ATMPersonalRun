@@ -1,3 +1,6 @@
+atm_train/attacker_build_data/datasets
+atm_train/attacker_build_data/pretrained_models
+README.md
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

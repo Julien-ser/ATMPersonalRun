@@ -1,6 +1,10 @@
 from transformers.models.llama.modeling_llama import *
-
-
+from torch import nn
+import torch
+from typing import Optional, List, Tuple, Union
+from transformers.modeling_outputs import CausalLMOutputWithPast
+from torch.nn import CrossEntropyLoss
+import torch.nn.functional as F 
 
 class LlamaPPL(LlamaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
@@ -84,7 +88,7 @@ class LlamaPPL(LlamaPreTrainedModel):
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
-            use_cache=use_cache,
+            use_cache=False,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,

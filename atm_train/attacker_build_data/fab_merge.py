@@ -80,14 +80,15 @@ if __name__ == '__main__':
 
     ds_name = args.ds_name
 
-    fab_file_path = f'./ask_output/{ds_name}_fab.csv'
+    #fab_file_path = f'./ask_output/{ds_name}_fab.csv'
+    fab_file_path = f'{ds_name}_fab.csv'
 
-    ds_source_path = f'/path/to/input/datasets/qas_test_retrieved/{ds_name}.jsonl'
+    #ds_source_path = f'/path/to/input/datasets/qas_test_retrieved/{ds_name}.jsonl'
+    ds_source_path = f'datasets/{ds_name}.jsonl'
 
-
-    dest_path = Path(f'/path/to/input/datasets/attacked_test_fab_{args.epoch_suffix}/')
+    '''dest_path = Path(f'/path/to/input/datasets/attacked_test_fab_{args.epoch_suffix}/')
     if not dest_path.exists():
-        dest_path.mkdir()
+        dest_path.mkdir()'''
 
 
     fab_df = pd.read_csv(fab_file_path)
@@ -117,4 +118,5 @@ if __name__ == '__main__':
 
     rds = Dataset.from_list(rds)
 
-    rds.to_json((dest_path / f'{ds_name}_fab.jsonl').resolve())
+    #rds.to_json((dest_path / f'{ds_name}_fab.jsonl').resolve())
+    rds.to_json(f'{ds_name}_fab.jsonl')
