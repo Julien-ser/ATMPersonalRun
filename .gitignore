@@ -1,6 +1,7 @@
 atm_train/attacker_build_data/datasets
 atm_train/attacker_build_data/pretrained_models
 README.md
+atm_train/generator_sft/inarr.jsonl
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
