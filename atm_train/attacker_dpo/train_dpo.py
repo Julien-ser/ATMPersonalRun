@@ -91,10 +91,11 @@ def main():
     else:
         raw_datasets = load_dataset('json', data_files=args.train_data, split='train')
 
-    print(raw_datasets)
-    
-    with accelerator.main_process_first():
-        ds = raw_datasets.map(tokenize_row, fn_kwargs={'tokenizer': tokenizer}, num_proc=8, remove_columns=raw_datasets.column_names)
+    #raw_datasets = raw_datasets.select(range(10))
+    ds = raw_datasets.map(tokenize_row, fn_kwargs={'tokenizer': tokenizer}, num_proc=8, remove_columns=raw_datasets.column_names)
+    print(f"[train_dpo.py] First row of tokenized dataset: {type(ds[0])}")
+    #with accelerator.main_process_first():
+     #   ds = raw_datasets.map(tokenize_row, fn_kwargs={'tokenizer': tokenizer}, num_proc=8, remove_columns=raw_datasets.column_names)
     #####################################
     # Load tokenizer and process datasets
 
@@ -150,11 +151,6 @@ def main():
         max_length=args.max_length,
         max_prompt_length=args.max_prompt_length,
         dataset_num_proc=8,
-        data_collator=DPODataCollatorWithPadding(
-            pad_token_id=tokenizer.pad_token_id,
-            label_pad_token_id=-100,
-            is_encoder_decoder=False
-        ),
     )
 
     ###############

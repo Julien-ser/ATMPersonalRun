@@ -81,6 +81,7 @@ class DPODataCollatorWithPadding:
 
     def __call__(self, features: List[Dict[str, Union[torch.Tensor, int]]]) -> Dict[str, Union[torch.Tensor, int]]:
         # First, find the longest sequence in the batch
+        print(f"[DPODataCollatorWithPadding] Input features: {type(features)}")
         max_length = max(
             [
                 len(feature["chosen_input_ids"])
@@ -292,11 +293,8 @@ def tokenize_row(feature, tokenizer):
                 continue
             batch[f"{k}{type_key}"] = tokens
 
-
+    print(f"[tokenize_row] Tokenized row: {type(batch)}")
     return batch
-
-
-
 
 
 
@@ -613,11 +611,23 @@ class DPOTrainer(Trainer):
         # Compute that only on the main process for faster data processing.
         # see: https://github.com/huggingface/trl/pull/1255
         with PartialState().local_main_process_first():
-            # tokenize the dataset
             if 'chosen' in train_dataset.column_names:
-                train_dataset = train_dataset.map(self.tokenize_row, num_proc=self.dataset_num_proc)
+                train_dataset = train_dataset.map(
+                    tokenize_row,
+                    fn_kwargs={'tokenizer': self.tokenizer},
+                    num_proc=self.dataset_num_proc
+                )
+                # Debugging: Print the first row of the tokenized dataset
+                print(f"[DPOTrainer] First row of tokenized train_dataset: {type(train_dataset[0])}")
+                
                 if eval_dataset is not None:
-                    eval_dataset = eval_dataset.map(self.tokenize_row, num_proc=self.dataset_num_proc)
+                    eval_dataset = eval_dataset.map(
+                        tokenize_row,
+                        fn_kwargs={'tokenizer': self.tokenizer},
+                        num_proc=self.dataset_num_proc
+                    )
+                    # Debugging: Print the first row of the tokenized eval_dataset
+                    print(f"[DPOTrainer] First row of tokenized eval_dataset: {type(eval_dataset[0])}")
 
         super().__init__(
             model=model,
@@ -732,7 +742,12 @@ class DPOTrainer(Trainer):
 
             self._precomputed_train_ref_log_probs = True
 
-        return super().get_train_dataloader()
+        dataloader = super().get_train_dataloader()
+        # Debugging: Print the first batch
+        for batch in dataloader:
+            print(f"[get_train_dataloader] First batch: {type(batch)}")
+            break
+        return dataloader
 
     def get_eval_dataloader(self, eval_dataset: Optional[Dataset] = None) -> DataLoader:
         """
@@ -836,7 +851,7 @@ class DPOTrainer(Trainer):
             attention_mask=answer_attention_mask,
         )
 
-    def tokenize_row(self, feature, model: Optional[Union[PreTrainedModel, nn.Module]] = None) -> Dict:
+    '''def tokenize_row(self, feature, model: Optional[Union[PreTrainedModel, nn.Module]] = None) -> Dict:
         """Tokenize a single row from a DPO specific dataset.
 
         At this stage, we don't convert to PyTorch tensors yet; we just handle the truncation
@@ -847,6 +862,7 @@ class DPOTrainer(Trainer):
             the sum of the length of the prompt and the chosen/rejected response, with
             label_pad_token_id  for the prompt tokens.
         """
+        #print("*********************************************I AM GETTING TOKENIZED******************************************")
         batch = {}
         prompt = feature["prompt"]
         chosen = feature["chosen"]
@@ -981,7 +997,7 @@ class DPOTrainer(Trainer):
                 )
 
         return batch
-
+'''
     @contextmanager
     def null_ref_context(self):
         """Context manager for handling null reference model (that is, peft adapter manipulation)."""
@@ -1025,7 +1041,9 @@ class DPOTrainer(Trainer):
         label_pad_token_id: int = -100,
         padding_value: int = 0,
         device: Optional[torch.device] = None,
+        tokenizer: Any = None,
     ) -> Dict[str, torch.LongTensor]:
+        print(f"[concatenated_inputs] Batch received: {type(batch)}")
         """Concatenate the chosen and rejected inputs into a single tensor.
 
         Args:
@@ -1038,15 +1056,21 @@ class DPOTrainer(Trainer):
         Returns:
             A dictionary containing the concatenated inputs under the key 'concatenated_input_ids'.
         """
+        if(isinstance(batch, str)):
+            dummy_row = {"prompt": batch, "chosen": batch, "rejected": batch}
+            batch = tokenize_row(dummy_row, tokenizer)
+        
+        for k, v in batch.items():
+            if isinstance(v, list):
+                batch[k] = torch.tensor(v).unsqueeze(0)
         concatenated_batch = {}
-
         if is_encoder_decoder:
-            #max_length = max(batch["chosen_labels"].shape[1], batch["rejected_labels"].shape[1])
-            max_length = max(len(batch["chosen_labels"]), len(batch["rejected_labels"]))
+            max_length = max(batch["chosen_labels"].shape[1], batch["rejected_labels"].shape[1])
+            #max_length = max(len(batch["chosen_labels"]), len(batch["rejected_labels"]))
         else:
-            #max_length = max(batch["chosen_input_ids"].shape[1], batch["rejected_input_ids"].shape[1])
-            max_length = max(len(batch["chosen_input_ids"]), len(batch["rejected_input_ids"]))
-
+            max_length = max(batch["chosen_input_ids"].shape[1], batch["rejected_input_ids"].shape[1])
+            #max_length = max(len(batch["chosen_input_ids"]), len(batch["rejected_input_ids"]))
+    
 
         for k in batch:
             if k.startswith("chosen") and isinstance(batch[k], torch.Tensor):
@@ -1214,6 +1238,7 @@ class DPOTrainer(Trainer):
             label_pad_token_id=self.label_pad_token_id,
             padding_value=self.padding_value,
             device=self.accelerator.device,
+            tokenizer=self.tokenizer,
         )
         len_chosen = batch["chosen_labels"].shape[0]
 
@@ -1315,11 +1340,20 @@ class DPOTrainer(Trainer):
         return_outputs=False,
         **kwargs
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, torch.Tensor]]]:
-        print("Type of inputs:", type(inputs))  # Should be Dict[str, torch.Tensor]
-        print("Keys in inputs:", inputs.keys())  # Should include 'chosen_input_ids', etc.
-        print("Shape of chosen_input_ids:", inputs["chosen_input_ids"].shape)
+        print(f"[compute_loss] Inputs received: {type(inputs)}")
+        
+        if isinstance(inputs, str):
+            print("[compute_loss] Raw strings detected, tokenizing inputs...")
+            dummy_row = {"prompt": inputs, "chosen": inputs, "rejected": inputs}
+            inputs = tokenize_row(dummy_row, self.tokenizer)
+            #inputs = tokenize_row(inputs, self.tokenizer)
+
         with open("debug_batch_inputs.txt", "w") as f:
-            f.write(str(inputs))
+            # Write the function arguments including the model, inputs, return_outputs, and kwargs
+            f.write(f"Model: {str(model)}\n")
+            f.write(f"Inputs: {str(inputs)}\n")
+            f.write(f"Return outputs: {return_outputs}\n")
+            f.write(f"Additional kwargs: {str(kwargs)}\n")
         if not self.use_dpo_data_collator:
             warnings.warn(
                 "compute_loss is only implemented for DPODataCollatorWithPadding, and you passed a datacollator that is different than "
@@ -1434,6 +1468,13 @@ class DPOTrainer(Trainer):
         reference_output = pad_to_length(reference_output, self.max_length, self.tokenizer.pad_token_id)
         reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
 
+        with open("batch_samples_output.txt", "a") as f:
+            print("[Batch Samples] Policy output decoded:", policy_output_decoded)
+            print("[Batch Samples] Reference output decoded:", reference_output_decoded)
+
+            f.write("[Batch Samples] Policy output decoded: " + str(policy_output_decoded) + "\n")
+            f.write("[Batch Samples] Reference output decoded: " + str(reference_output_decoded) + "\n")
+
         return policy_output_decoded, reference_output_decoded
 
     def prediction_step(
@@ -1444,6 +1485,14 @@ class DPOTrainer(Trainer):
         prediction_loss_only: bool,
         ignore_keys: Optional[List[str]] = None,
     ):
+        
+        #print(f"[prediction_step] Inputs received: {inputs}")
+        print(f"[prediction_step] Input type: {type(inputs)}")
+        if isinstance(inputs, dict):
+            print(f"[prediction_step] Input keys: {inputs.keys()}")
+        else:
+            print(f"[prediction_step] Input is not a dictionary!")
+
         if not self.use_dpo_data_collator:
             warnings.warn(
                 "prediction_step is only implemented for DPODataCollatorWithPadding, and you passed a datacollator that is different than "
@@ -1557,10 +1606,15 @@ class DPOTrainer(Trainer):
             random_batch = self.data_collator(random_batch_dataset)
             random_batch = self._prepare_inputs(random_batch)
 
+            print("[Random Batch]: ", type(random_batch))
+            with open("random_batch.txt", "a") as f:
+                f.write("[Random Batch]: " + str(random_batch) + "\n")
+                f.write("[Random Batch keys]: " + str(random_batch.keys()) + "\n")
             #policy_output_decoded, ref_output_decoded = self.get_batch_samples(self.model, random_batch)
             policy_output_decoded, ref_output_decoded = self.get_batch_samples(random_batch)
-
-            self.log(
+            data = {"prompt":policy_output_decoded, "chosen": ref_output_decoded, "rejected": ref_output_decoded}   
+            policy_output_decoded = tokenize_row(data, self.tokenizer)
+            '''self.log(
                 {
                     "game_log": wandb.Table(
                         columns=["Prompt", "Policy", "Ref Model"],
@@ -1573,13 +1627,19 @@ class DPOTrainer(Trainer):
                     )
                 }
             )
-            self.state.log_history.pop()
+            self.state.log_history.pop()'''
 
         # Base evaluation
         initial_output = super().evaluation_loop(
             dataloader, description, prediction_loss_only, ignore_keys, metric_key_prefix
         )
 
+        with open("eval_output.txt", "a") as f:
+            print("[evaluation_loop] Initial output:", type(initial_output))
+            print(f"[evaluation_loop] initial_output contents: {initial_output}")
+            
+            f.write("[evaluation_loop] Initial output: " + str(type(initial_output)) + "\n")
+            f.write(f"[evaluation_loop] initial_output contents: {initial_output}\n")
         return initial_output
 
     def log(self, logs: Dict[str, float]) -> None:
