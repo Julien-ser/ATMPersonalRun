@@ -1659,7 +1659,7 @@ class DPOTrainer(Trainer):
             logs[key] = torch.tensor(metrics).mean().item()
         del self._stored_metrics[train_eval]
 
-        return super().log(logs, step=step)
+        return super().log(logs)#, step=step)
 
 
     @wraps(Trainer.push_to_hub)
