@@ -350,7 +350,7 @@ class MITOTrainer(DPOTrainer):
             padding_value=self.padding_value,
             device=self.accelerator.device,
         )
-        len_chosen = batch["chosen_labels"].shape[0]
+        len_chosen = len(batch["chosen_labels"])#.shape[0]
 
         model_kwargs = (
             {
@@ -565,7 +565,8 @@ class MITOTrainer(DPOTrainer):
         # Get max length considering both chosen and rejected
         chosen_inputs = ensure_tensor(batch["chosen_input_ids"])
         rejected_inputs = ensure_tensor(batch["rejected_input_ids"])
-        max_length = max(chosen_inputs.shape[1], rejected_inputs.shape[1])
+        print(chosen_inputs.shape, rejected_inputs.shape)
+        max_length = max(chosen_inputs.shape[0], rejected_inputs.shape[0])
 
         # Process chosen/rejected pairs
         for prefix in ["chosen", "rejected"]:
@@ -585,8 +586,9 @@ class MITOTrainer(DPOTrainer):
                     )
                 else:
                     concatenated_batch[f"concatenated_{key}"] = padded
-
-        return concatenated_batch.to(device=device) if device else concatenated_batch
+        
+        return {key: value.to(device) for key, value in concatenated_batch.items()} if device else concatenated_batch
+        #return concatenated_batch#.to(device=device) if device else concatenated_batch
         
 
 def mito_tokenize_row(feature, tokenizer) -> Dict:
