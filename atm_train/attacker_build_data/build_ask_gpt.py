@@ -63,9 +63,12 @@ def call_model_dup(prompts, model, max_new_tokens=50, num_dups=1):
     
     odf = pd.DataFrame(columns=[f'output_{idx}' for idx in range(num_dups)])
     for idx in range(num_dups):
-        preds = model.generate(pdf[f'input_{idx}'].tolist(), sampling_params)
-        preds = [pred.outputs[0].text for pred in preds]
-        odf[f'output_{idx}'] = preds                                            
+        try:
+            preds = model.generate(pdf[f'input_{idx}'].tolist(), sampling_params)
+            preds = [pred.outputs[0].text for pred in preds]
+            odf[f'output_{idx}'] = preds   
+        except Exception as e:
+            print("Error in generation:", e)                                         
     return odf
 
                                                     

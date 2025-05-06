@@ -8,7 +8,7 @@ python3 fab_merge.py --ds_name triviaqa_small
 
 pip uninstall torch torchvision torchaudio
 
-pip install torch torchvision torchaudio
+pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 --force-reinstall
 
 python3 data_setup_full.py
 

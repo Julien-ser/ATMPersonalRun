@@ -799,7 +799,12 @@ class DPOTrainer(Trainer):
                 self.eval_dataset = eval_dataset
             self._precomputed_eval_ref_log_probs = True
 
-        return super().get_eval_dataloader(eval_dataset=eval_dataset)
+        dataloader = super().get_eval_dataloader(eval_dataset=eval_dataset)
+        # Debugging: Print the first batch
+        for batch in dataloader:
+            print(f"[get_eval_dataloader] First batch: {type(batch)}")
+            break
+        return dataloader
 
     def build_tokenized_answer(self, prompt, answer):
         """
@@ -1612,9 +1617,9 @@ class DPOTrainer(Trainer):
                 f.write("[Random Batch keys]: " + str(random_batch.keys()) + "\n")
             #policy_output_decoded, ref_output_decoded = self.get_batch_samples(self.model, random_batch)
             policy_output_decoded, ref_output_decoded = self.get_batch_samples(random_batch)
-            data = {"prompt":policy_output_decoded, "chosen": ref_output_decoded, "rejected": ref_output_decoded}   
-            policy_output_decoded = tokenize_row(data, self.tokenizer)
-            '''self.log(
+            #data = {"prompt":policy_output_decoded, "chosen": ref_output_decoded, "rejected": ref_output_decoded}   
+            #policy_output_decoded = tokenize_row(data, self.tokenizer)
+            self.log(
                 {
                     "game_log": wandb.Table(
                         columns=["Prompt", "Policy", "Ref Model"],
@@ -1627,8 +1632,7 @@ class DPOTrainer(Trainer):
                     )
                 }
             )
-            self.state.log_history.pop()'''
-
+            self.state.log_history.pop()
         # Base evaluation
         initial_output = super().evaluation_loop(
             dataloader, description, prediction_loss_only, ignore_keys, metric_key_prefix
@@ -1642,21 +1646,21 @@ class DPOTrainer(Trainer):
             f.write(f"[evaluation_loop] initial_output contents: {initial_output}\n")
         return initial_output
 
-    def log(self, logs: Dict[str, float]) -> None:
+    def log(self, logs: Dict[str, float], step: Optional[int] = None) -> None:
         """
         Log `logs` on the various objects watching training, including stored metrics.
 
         Args:
-            logs (`Dict[str, float]`):
-                The values to log.
+            logs (`Dict[str, float]`): The values to log.
+            step (`int`, *optional*): The training step.
         """
-        # logs either has 'loss' or 'eval_loss'
         train_eval = "train" if "loss" in logs else "eval"
-        # Add averaged stored metrics to logs
         for key, metrics in self._stored_metrics[train_eval].items():
             logs[key] = torch.tensor(metrics).mean().item()
         del self._stored_metrics[train_eval]
-        return super().log(logs)
+
+        return super().log(logs, step=step)
+
 
     @wraps(Trainer.push_to_hub)
     def push_to_hub(self, commit_message: Optional[str] = "End of training", blocking: bool = True, **kwargs) -> str:
