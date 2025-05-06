@@ -52,7 +52,8 @@ def pad_to_length(tensor: torch.Tensor, length: int, pad_value: int, dim: int = 
         return tensor
     pad_size = list(tensor.size())
     pad_size[dim] = length - tensor.size(dim)
-    return torch.cat([tensor, pad_value * torch.ones(*pad_size, dtype=tensor.dtype, device=tensor.device)], dim=dim)
+    padding = pad_value * torch.ones(*pad_size, dtype=tensor.dtype, device=tensor.device)
+    return torch.cat([tensor, padding], dim=dim)
 
 def disable_dropout_in_model(model: torch.nn.Module) -> None:
     """Disable dropout in a model."""
@@ -82,14 +83,19 @@ class DPODataCollatorWithPadding:
     def __call__(self, features: List[Dict[str, Union[torch.Tensor, int]]]) -> Dict[str, Union[torch.Tensor, int]]:
         # First, find the longest sequence in the batch
         print(f"[DPODataCollatorWithPadding] Input features: {type(features)}")
+        print(f"[DPODataCollatorWithPadding] Input features: {features}")
         max_length = max(
-            [
+            len(feature[k])
+            for feature in features
+            for k in feature
+            if k.endswith("_input_ids")
+        )
+        '''[
                 len(feature["chosen_input_ids"])
                 if "chosen_input_ids" in feature
                 else len(feature["prompt_input_ids"])
                 for feature in features
-            ]
-        )
+            ]'''    
 
         batch = {}
         for k in features[0].keys():
@@ -117,8 +123,10 @@ class DPODataCollatorWithPadding:
                         for feature in features
                     ]
                 )
+            if isinstance(features[0][k], str):
+                print(f"Key {k} contains string data. Skipping tensor conversion.")
+                batch[k] = [feature[k] for feature in features]  # Keep as a list of strings
             else:
-                # Pass through other features
                 batch[k] = torch.tensor([feature[k] for feature in features])
         print(f"[Collator] Batch type: {type(batch)}")  # Should be Dict
         print(f"[Collator] Batch keys: {batch.keys()}")
@@ -1442,8 +1450,8 @@ class DPOTrainer(Trainer):
 
         with generate_context_manager():
             policy_output = self.model.generate(
-                input_ids=batch["prompt_input_ids"],
-                attention_mask=batch["prompt_attention_mask"],
+                input_ids=batch["chosen_input_ids"],
+                attention_mask=batch["chosen_attention_mask"],
                 max_length=self.max_length,
                 do_sample=True,
                 pad_token_id=self.tokenizer.pad_token_id,
@@ -1452,16 +1460,16 @@ class DPOTrainer(Trainer):
             if self.ref_model is None:
                 with self.null_ref_context():
                     reference_output = self.model.generate(
-                        input_ids=batch["prompt_input_ids"],
-                        attention_mask=batch["prompt_attention_mask"],
+                        input_ids=batch["chosen_input_ids"],
+                        attention_mask=batch["chosen_attention_mask"],
                         max_length=self.max_length,
                         do_sample=True,
                         pad_token_id=self.tokenizer.pad_token_id,
                     )
             else:
                 reference_output = self.ref_model.generate(
-                    input_ids=batch["prompt_input_ids"],
-                    attention_mask=batch["prompt_attention_mask"],
+                    input_ids=batch["chosen_input_ids"],
+                    attention_mask=batch["chosen_attention_mask"],
                     max_length=self.max_length,
                     do_sample=True,
                     pad_token_id=self.tokenizer.pad_token_id,

@@ -229,7 +229,7 @@ class MITOTrainer(DPOTrainer):
 
         if data_collator is None:
             data_collator = DPODataCollatorWithPadding(
-                tokenizer=tokenizer,
+                #tokenizer=tokenizer,
                 pad_token_id=tokenizer.pad_token_id,
                 label_pad_token_id=label_pad_token_id,
                 is_encoder_decoder=self.is_encoder_decoder,
@@ -590,15 +590,15 @@ class MITOTrainer(DPOTrainer):
         
 
 def mito_tokenize_row(feature, tokenizer) -> Dict:
-    """Tokenize a single row from a DPO specific dataset.
+    """Tokenize a single row from a DPO-specific dataset.
 
     At this stage, we don't convert to PyTorch tensors yet; we just handle the truncation
     in case the prompt + chosen or prompt + rejected responses is/are too long. First
-        we truncate the prompt; if we're still too long, we truncate the chosen/rejected.
+    we truncate the prompt; if we're still too long, we truncate the chosen/rejected.
 
     We also create the labels for the chosen/rejected responses, which are of length equal to
-        the sum of the length of the prompt and the chosen/rejected response, with
-        label_pad_token_id  for the prompt tokens.
+    the sum of the length of the prompt and the chosen/rejected response, with
+    label_pad_token_id for the prompt tokens.
     """
     batch = {}
     adv_prompt = feature["adv_prompt"]
@@ -607,68 +607,62 @@ def mito_tokenize_row(feature, tokenizer) -> Dict:
 
     label_pad_token_id = -100
 
-
     if not isinstance(prompt, str):
-        raise ValueError(f"prompt should be an str but got {type(prompt)}")
+        raise ValueError(f"prompt should be a string but got {type(prompt)}")
+    if not isinstance(answer, str):
+        raise ValueError(f"answer should be a string but got {type(answer)}")
+    if not isinstance(adv_prompt, str):
+        raise ValueError(f"adv_prompt should be a string but got {type(adv_prompt)}")
 
     assert tokenizer.padding_side == 'left'
 
-    prompt_encs = tokenizer([prompt, adv_prompt], padding=True, add_special_tokens=False)
+    # Tokenize the prompt, adv_prompt, and answer
+    prompt_encs = tokenizer([prompt, prompt], padding=True, add_special_tokens=False)
+    adv_prompt_encs = tokenizer(adv_prompt, add_special_tokens=False)
     answer_encs = tokenizer(answer, add_special_tokens=False)
 
-    if not isinstance(answer, str):
-        raise ValueError(f"answer should be an str but got {type(answer)}")
-
-
-    chosen_tokens = {}
-    rejected_tokens = {}
-
-    chosen_tokens["prompt_input_ids"] = prompt_encs["input_ids"][0]
-    rejected_tokens["prompt_input_ids"] = prompt_encs["input_ids"][1]
-
-    chosen_tokens["prompt_attention_mask"] = prompt_encs["attention_mask"][0]
-    rejected_tokens["prompt_attention_mask"] = prompt_encs["attention_mask"][1]
-
-    # chosen_tokens["input_ids"] = chosen_tokens["prompt_input_ids"] + answer_encs['input_ids']
-    # rejected_tokens["input_ids"] = rejected_tokens["prompt_input_ids"] + answer_encs['input_ids']
-
-    # chosen_tokens["attention_mask"] = chosen_tokens["prompt_attention_mask"] + answer_encs['attention_mask']
-    # rejected_tokens["attention_mask"] = rejected_tokens["prompt_attention_mask"] + answer_encs['attention_mask']
-
-
+    # Add EOS token to the answer
     answer_encs["input_ids"].append(tokenizer.eos_token_id)
     answer_encs["attention_mask"].append(1)
 
-    # Create labels
+    # Add BOS token to the prompt, chosen, and rejected sequences
+    prompt_encs["input_ids"][0] = [tokenizer.bos_token_id] + prompt_encs["input_ids"][0]
+    prompt_encs["input_ids"][1] = [tokenizer.bos_token_id] + prompt_encs["input_ids"][1]
+    prompt_encs["attention_mask"][0] = [1] + prompt_encs["attention_mask"][0]
+    prompt_encs["attention_mask"][1] = [1] + prompt_encs["attention_mask"][1]
+
+    adv_prompt_encs["input_ids"] = [tokenizer.bos_token_id] + adv_prompt_encs["input_ids"]
+    adv_prompt_encs["attention_mask"] = [1] + adv_prompt_encs["attention_mask"]
+
+    answer_encs["input_ids"] = [tokenizer.bos_token_id] + answer_encs["input_ids"]
+    answer_encs["attention_mask"] = [1] + answer_encs["attention_mask"]
+
+    # Create chosen (answer) and rejected (adv_prompt) sequences
     chosen_sequence_tokens = {
-        k: chosen_tokens[f"prompt_{k}"] + answer_encs[k] for k in ["input_ids", "attention_mask"]
+        k: prompt_encs["input_ids"][0] + answer_encs[k] for k in ["input_ids", "attention_mask"]
     }
     rejected_sequence_tokens = {
-        k: rejected_tokens[f"prompt_{k}"] + answer_encs[k] for k in ["input_ids", "attention_mask"]
+        k: prompt_encs["input_ids"][1] + adv_prompt_encs[k] for k in ["input_ids", "attention_mask"]
     }
 
+    # Create labels for chosen and rejected
     chosen_sequence_tokens["labels"] = chosen_sequence_tokens["input_ids"][:]
-
-    assert len(chosen_tokens["prompt_input_ids"]) == len(rejected_tokens["prompt_input_ids"])
-    
-    chosen_sequence_tokens["labels"][: len(chosen_tokens["prompt_input_ids"])] = [
-        label_pad_token_id
-    ] * len(chosen_tokens["prompt_input_ids"])
+    chosen_sequence_tokens["labels"][: len(prompt_encs["input_ids"][0])] = [label_pad_token_id] * len(
+        prompt_encs["input_ids"][0]
+    )
 
     rejected_sequence_tokens["labels"] = rejected_sequence_tokens["input_ids"][:]
-    rejected_sequence_tokens["labels"][: len(rejected_tokens["prompt_input_ids"])] = [
-        label_pad_token_id
-    ] * len(rejected_tokens["prompt_input_ids"])
+    rejected_sequence_tokens["labels"][: len(prompt_encs["input_ids"][1])] = [label_pad_token_id] * len(
+        prompt_encs["input_ids"][1]
+    )
 
-
-    for k, toks in {
+    # Add to batch
+    for prefix, tokens in {
         "chosen_": chosen_sequence_tokens,
         "rejected_": rejected_sequence_tokens,
     }.items():
-        for type_key, tokens in toks.items():
-            if type_key == "token_type_ids":
-                continue
-            batch[f"{k}{type_key}"] = tokens
+        for key, value in tokens.items():
+            batch[f"{prefix}{key}"] = value
 
     return batch
 

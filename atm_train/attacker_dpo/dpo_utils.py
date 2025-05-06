@@ -52,7 +52,8 @@ def pad_to_length(tensor: torch.Tensor, length: int, pad_value: int, dim: int = 
         return tensor
     pad_size = list(tensor.size())
     pad_size[dim] = length - tensor.size(dim)
-    return torch.cat([tensor, pad_value * torch.ones(*pad_size, dtype=tensor.dtype, device=tensor.device)], dim=dim)
+    padding = pad_value * torch.ones(*pad_size, dtype=tensor.dtype, device=tensor.device)
+    return torch.cat([tensor, padding], dim=dim)
 
 def disable_dropout_in_model(model: torch.nn.Module) -> None:
     """Disable dropout in a model."""
@@ -83,13 +84,17 @@ class DPODataCollatorWithPadding:
         # First, find the longest sequence in the batch
         print(f"[DPODataCollatorWithPadding] Input features: {type(features)}")
         max_length = max(
-            [
+            len(feature[k])
+            for feature in features
+            for k in feature
+            if k.endswith("_input_ids")
+        )
+        '''[
                 len(feature["chosen_input_ids"])
                 if "chosen_input_ids" in feature
                 else len(feature["prompt_input_ids"])
                 for feature in features
-            ]
-        )
+            ]'''    
 
         batch = {}
         for k in features[0].keys():
