@@ -14,7 +14,7 @@ import re
 
 example_format = 'TITLE {title} # TEXT {text}'
 
-NUM_DUPS = 5
+NUM_DUPS = 1
 # NUM_DUPS = 10
 def format_row(example):
     prompts = []

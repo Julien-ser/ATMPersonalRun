@@ -25,4 +25,4 @@ def process_jsonl(input_path, output_path):
             outfile.write(json.dumps(transformed) + "\n")
 
 # Example usage:
-process_jsonl("triviaqa_small_fab.jsonl", "inarr.jsonl")
+process_jsonl("triviaqa_fab.jsonl", "tinarr.jsonl")

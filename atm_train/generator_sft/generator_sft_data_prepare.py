@@ -188,7 +188,7 @@ if __name__ == "__main__":
     shuffler = Shuffler(shuffle_config)    
 
     #ds = load_dataset('json', data_dir=f'/path/to/input/datasets/generator_sft', split='train') 
-    ds = load_dataset('json', data_files='inarr.jsonl', split='train')
+    ds = load_dataset('json', data_files='tinarr.jsonl', split='train')
     ds = ds.map(process_data, remove_columns=ds.column_names, num_proc=8)
 
 

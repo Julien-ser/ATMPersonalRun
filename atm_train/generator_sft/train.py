@@ -107,8 +107,13 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
             args.model_name_or_path,
             torch_dtype=torch.bfloat16 if args.bf16 else (torch.float16 if args.fp16 else torch.float32), trust_remote_code=True)
+    model.config.pretraining_tp = 1
+    #model = model.cuda()
+    #model = deepspeed.initialize(model=model, config=args.deepspeed_file)[0]
     model.config.use_cache = False
+    model.gradient_checkpointing_enable()
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
+    tokenizer.model_max_length = 256
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
     
@@ -140,6 +145,7 @@ def main():
         deepspeed=args.deepspeed_file,
         lr_scheduler_type=args.lr_scheduler_type,
         warmup_ratio=args.warmup_ratio,
+        bf16=True,
     )
     
     trainer = Trainer(#Seq2SeqTrainer(

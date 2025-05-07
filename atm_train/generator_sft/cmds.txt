@@ -6,12 +6,11 @@ pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync
 OMP_NUM_THREADS=1 deepspeed --hostfile='hosts.cfg' train.py \
-    --model_name_or_path /home/julien/ATM-RAG/atm_train/attacker_build_data/pretrained_models/Lite \
+    --model_name_or_path /home/julien/ATM-RAG/atm_train/attacker_build_data/pretrained_models/SLite \
     --train_data arrows/ \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 1 \
-    --gradient_accumulation_steps 32  \
-    --fp16 \
+    --gradient_accumulation_steps 4  \
     --deepspeed_file ./ds_cfg.json \
     --output_dir ./experiments/ \
     --lr_scheduler_type cosine \
