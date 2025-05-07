@@ -128,6 +128,10 @@ if __name__ == '__main__':
     ds_name = args.ds_name
     ds = load_dataset('json', data_files=f'datasets/{ds_name}.jsonl', split='train')
     
+    # Limit to 10,000 examples if dataset is larger
+    if len(ds) > 10000:
+        ds = ds.shuffle(seed=42).select(range(10000))
+    
     ds = ds.map(format_row, num_proc=8, remove_columns=ds.column_names)
     
     model = LLM(model=args.model_name, tensor_parallel_size=args.world_size, trust_remote_code=True, swap_space=4)
