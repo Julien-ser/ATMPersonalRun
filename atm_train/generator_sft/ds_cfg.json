@@ -9,7 +9,7 @@
   },
 
   "zero_optimization": {
-    "stage": 2,
+    "stage": 3,
     "offload_param": {
       "device": "cpu"
     },
@@ -24,6 +24,6 @@
     "contiguous_gradients": true
   },
 
-  "gradient_accumulation_steps": 1,
+  "gradient_accumulation_steps": "auto",
   "train_micro_batch_size_per_gpu": 1
 }

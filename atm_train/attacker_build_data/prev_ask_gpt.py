@@ -10,7 +10,6 @@ import torch
 torch.cuda.empty_cache()
 torch.cuda.reset_peak_memory_stats()
 import os
-import re
 
 example_format = 'TITLE {title} # TEXT {text}'
 
@@ -63,62 +62,28 @@ def is_valid_prompt_list(prompt_list):
             for p in prompt_list)
     )
 
-def clean_prompt(prompt):
-    """Clean prompt by removing non-printable, non-ASCII, and weird characters, and standardizing whitespace."""
-    if not isinstance(prompt, str):
-        return ''
-    # Remove non-printable characters
-    prompt = re.sub(r'[^\x20-\x7E\n\r\t]', '', prompt)
-    # Replace multiple whitespace with single space
-    prompt = re.sub(r'\s+', ' ', prompt)
-    # Strip leading/trailing whitespace
-    prompt = prompt.strip()
-    return prompt
-
 def call_model_dup(prompts, model, max_new_tokens=50, num_dups=1):
-    error_log_path = 'prefix_errors.txt'
-    filtered_prompts = []
-    error_count = 0
-    with open(error_log_path, 'a') as error_log:
-        for p in prompts:
-            # Clean each prompt in the group
-            cleaned = [clean_prompt(x) for x in p]
-            if is_valid_prompt_list(cleaned):
-                filtered_prompts.append(cleaned)
-            else:
-                error_count += 1
-                error_log.write(f"[INVALID PROMPT GROUP] {json.dumps(cleaned, ensure_ascii=False)}\n")
+                                                    
+    filtered_prompts = [p for p in prompts if is_valid_prompt_list(p)]
 
     print(f"[ℹ️] Filtered out {len(prompts) - len(filtered_prompts)} malformed prompt groups.")
-    if error_count > 0:
-        print(f"[!] {error_count} prompt groups written to {error_log_path}")
 
-    if not filtered_prompts:
-        print("No valid prompts to process.")
-        return pd.DataFrame(columns=[f'output_{idx}' for idx in range(num_dups)])
-
-    prompts = np.array(filtered_prompts).reshape((-1, num_dups))
+    # Now safe to reshape
+    prompts = np.array(filtered_prompts).reshape((-1, num_dups))                                                
+    #prompts = np.array(prompts)
+    #prompts = prompts.reshape((-1, num_dups))
     pdf = pd.DataFrame(prompts, columns=[f'input_{idx}' for idx in range(num_dups)])
-
+                                                    
     sampling_params = SamplingParams(
         temperature=0.8, top_p=0.95, max_tokens=max_new_tokens)
-
+    
     odf = pd.DataFrame(columns=[f'output_{idx}' for idx in range(num_dups)])
     for idx in range(num_dups):
-        try:
-            preds = model.generate(pdf[f'input_{idx}'].tolist(), sampling_params)
-            preds = [pred.outputs[0].text for pred in preds]
-            odf[f'output_{idx}'] = preds
-        except Exception as e:
-            # Log the error and the prompts that caused it
-            with open(error_log_path, 'a') as error_log:
-                error_log.write(f"[MODEL ERROR] input_{idx}: {str(e)}\n")
-                for prompt in pdf[f'input_{idx}'].tolist():
-                    error_log.write(f"[PROMPT] {prompt}\n")
-            print(f"[ERROR] in model.generate for input_{idx}: {e}")
-            odf[f'output_{idx}'] = [f"[ERROR] {str(e)}"] * len(pdf)
+        preds = model.generate(pdf[f'input_{idx}'].tolist(), sampling_params)
+        preds = [pred.outputs[0].text for pred in preds]
+        odf[f'output_{idx}'] = preds   
 
-    odf.to_csv("test_fab.csv", index=False)
+    odf.to_csv("test_fab.csv", index=False)                                         
     return odf
 
                                                     
