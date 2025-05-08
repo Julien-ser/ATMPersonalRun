@@ -31,7 +31,9 @@ from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from deepspeed.accelerator import get_accelerator
 import psutil
 import datetime
-#get_accelerator().empty_cache()
+import gc
+
+gc.collect()
 torch.cuda.empty_cache()
 
 class MemTrainer(Trainer):
@@ -135,7 +137,7 @@ def main():
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
-    tokenizer.model_max_length = 128
+    tokenizer.model_max_length = 256
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
     
