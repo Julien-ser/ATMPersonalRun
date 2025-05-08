@@ -29,13 +29,22 @@ from transformers.integrations.deepspeed import HfDeepSpeedConfig
 import deepspeed
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from deepspeed.accelerator import get_accelerator
-
+import psutil
+import datetime
 #get_accelerator().empty_cache()
 torch.cuda.empty_cache()
 
 class MemTrainer(Trainer):
     def training_step(self, *args, **kwargs):
         loss = super().training_step(*args, **kwargs)
+
+        # Memory logging
+        current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        used = torch.cuda.memory_allocated() / (1024 ** 2)
+        reserved = torch.cuda.memory_reserved() / (1024 ** 2)
+        max_mem = torch.cuda.max_memory_allocated() / (1024 ** 2)
+        print(f"[{current_time}] Step {self.state.global_step} - Used: {used:.2f}MB | Reserved: {reserved:.2f}MB | Max: {max_mem:.2f}MB")
+
         get_accelerator().empty_cache()
         return loss
 

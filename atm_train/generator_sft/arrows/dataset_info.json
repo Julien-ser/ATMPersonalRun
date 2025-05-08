@@ -3,15 +3,15 @@
   "citation": "",
   "config_name": "default",
   "dataset_name": "json",
-  "dataset_size": 122014696,
+  "dataset_size": 1197025388,
   "description": "",
   "download_checksums": {
-    "/home/julien/ATM-RAG/atm_train/generator_sft/inarr.jsonl": {
-      "num_bytes": 126961604,
+    "/home/julien/ATM-RAG/atm_train/generator_sft/tinarr.jsonl": {
+      "num_bytes": 1269047933,
       "checksum": null
     }
   },
-  "download_size": 126961604,
+  "download_size": 1269047933,
   "features": {
     "input_ids": {
       "feature": {
@@ -30,12 +30,17 @@
   },
   "homepage": "",
   "license": "",
-  "size_in_bytes": 248976300,
+  "size_in_bytes": 2466073321,
   "splits": {
     "train": {
       "name": "train",
-      "num_bytes": 122014696,
-      "num_examples": 1000,
+      "num_bytes": 1197025388,
+      "num_examples": 10000,
+      "shard_lengths": [
+        4068,
+        4359,
+        1573
+      ],
       "dataset_name": "json"
     }
   },
