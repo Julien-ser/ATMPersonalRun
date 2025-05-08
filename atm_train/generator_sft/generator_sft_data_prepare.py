@@ -188,7 +188,7 @@ if __name__ == "__main__":
     shuffler = Shuffler(shuffle_config)    
 
     #ds = load_dataset('json', data_dir=f'/path/to/input/datasets/generator_sft', split='train') 
-    ds = load_dataset('json', data_files='tinarr.jsonl', split='train')
+    ds = load_dataset('json', data_files='finarr.jsonl', split='train')
     ds = ds.map(process_data, remove_columns=ds.column_names, num_proc=8)
 
 
@@ -197,5 +197,5 @@ if __name__ == "__main__":
 
     ds = ds.map(process_str_to_input_ids, remove_columns=ds.column_names, num_proc=8)
 
-    ds.save_to_disk('arrows/')#f'/path/to/input/datasets/attacked_train_fab_for_sft_arrows')
+    ds.save_to_disk('wikiarrows/')#f'/path/to/input/datasets/attacked_train_fab_for_sft_arrows')
     

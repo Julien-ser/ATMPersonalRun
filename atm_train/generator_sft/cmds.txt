@@ -3,14 +3,17 @@ pip uninstall torch torchvision torchaudio
 pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu118
 
 
+python3 generator_sft_data_prepare.py
+
+
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync
 OMP_NUM_THREADS=1 deepspeed --hostfile='hosts.cfg' train.py \
     --model_name_or_path /home/julien/ATM-RAG/atm_train/attacker_build_data/pretrained_models/SLite \
-    --train_data arrows/ \
+    --train_data hotarrows/ \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 1 \
-    --gradient_accumulation_steps 64  \
+    --gradient_accumulation_steps 1  \
     --deepspeed_file ./ds_cfg.json \
     --output_dir ./experiments/ \
     --lr_scheduler_type constant \
