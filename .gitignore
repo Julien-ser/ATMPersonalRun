@@ -11,6 +11,7 @@ atm_train/generator_sft/arrows
 atm_train/generator_sft/hotarrows
 atm_train/generator_sft/wikiarrows
 atm_train/attacker_build_data/arrows
+atm_train/attacker_build_data/datasets
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

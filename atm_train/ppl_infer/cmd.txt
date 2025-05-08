@@ -1,6 +1,14 @@
 torchrun --nnodes=1 --nproc_per_node=1 \
     ppl_infer_with_trainer.py \
     --model_name_or_path /home/julien/ATM-RAG/atm_train/attacker_build_data/pretrained_models/Lite \
-    --input_file triviaqa_small_fab.jsonl \
+    --input_file wikiset_fab.jsonl \
     --per_device_eval_batch_size 1 \
-    --output triviaqa_small_score.csv
+    --output wikiset_score.csv
+
+
+torchrun --nnodes=1 --nproc_per_node=1 \
+    ppl_infer_with_trainer.py \
+    --model_name_or_path /home/julien/ATM-RAG/atm_train/attacker_build_data/pretrained_models/Lite \
+    --input_file hotpot_style_fab.jsonl \
+    --per_device_eval_batch_size 1 \
+    --output hotpot_style_score.csv
