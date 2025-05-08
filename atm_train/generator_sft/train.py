@@ -20,6 +20,7 @@ from transformers import (
     set_seed,
     TrainingArguments,
     Trainer,
+    TrainerCallback,
 #    Seq2SeqTrainingArguments,
 #    Seq2SeqTrainer,
 )
@@ -29,7 +30,19 @@ import deepspeed
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from deepspeed.accelerator import get_accelerator
 
+#get_accelerator().empty_cache()
 torch.cuda.empty_cache()
+
+class MemTrainer(Trainer):
+    def training_step(self, *args, **kwargs):
+        loss = super().training_step(*args, **kwargs)
+        get_accelerator().empty_cache()
+        return loss
+
+class EmptyCacheCallback(TrainerCallback):
+    def on_step_end(self, args, state, control, **kwargs):
+        get_accelerator().empty_cache()
+        return control
 
 def print_rank_0(msg, rank=0):
     if rank <= 0:
@@ -123,6 +136,10 @@ def main():
         train_dataset = DatasetDict.load_from_disk(args.train_data)['train']
     except:
         train_dataset = Dataset.load_from_disk(args.train_data)
+
+    #making eval dataset 10% of train dataset to ensure no OOM errors.
+    split_dataset = train_dataset.train_test_split(test_size=0.1, seed=args.seed)
+    eval_dataset = split_dataset['test']
         
     print_rank_0("***** Data load success! *****", args.global_rank)
         
@@ -145,16 +162,16 @@ def main():
         deepspeed=args.deepspeed_file,
         lr_scheduler_type=args.lr_scheduler_type,
         warmup_ratio=args.warmup_ratio,
-        bf16=True,
     )
     
-    trainer = Trainer(#Seq2SeqTrainer(
+    trainer = MemTrainer(#Seq2SeqTrainer(
         model,
         training_args,
         train_dataset=train_dataset,
-        eval_dataset=train_dataset,
-        data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, pad_to_multiple_of=8),
+        eval_dataset=eval_dataset,
+        data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, pad_to_multiple_of=4),
         tokenizer=tokenizer,
+        callbacks=[EmptyCacheCallback()],
     )
     
     trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
