@@ -23,6 +23,7 @@ atm_train/ppl_infer/triviaqa_fab.jsonl
 atm_train/ppl_infer/triviaqa_fab.csv
 atm_train/ppl_infer/triviaqa_fab_score.csv
 atm_train/ppl_infer/wandb
+atm_train/attacker_dpo/triviaqa.jsonl
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
