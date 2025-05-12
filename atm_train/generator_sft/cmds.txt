@@ -20,3 +20,25 @@ OMP_NUM_THREADS=1 deepspeed --hostfile='hosts.cfg' train.py \
     --num_train_epochs 1 \
     --fp16 \
     --learning_rate 5e-6
+
+
+CLUSTER
+
+    deepspeed \
+    --num_gpus 1 \
+    --num_nodes 2 \
+    --node_rank 0 \
+    --master_addr 192.168.1.10 \
+    --master_port 29500 \
+    train.py \
+    --model_name_or_path /path/to/model \
+    --train_data /path/to/data \
+    --deepspeed_file ds_cfg.json \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
+    --output_dir ./outputs \
+    --num_train_epochs 1 \
+    --gradient_accumulation_steps 1 \
+    --lr_scheduler_type constant \
+    --fp16 \
+    --learning_rate 5e-6

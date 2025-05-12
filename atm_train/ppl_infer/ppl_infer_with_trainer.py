@@ -134,7 +134,7 @@ def main():
     odf.to_csv(args.output, index=False)
 
 if __name__ == "__main__":
-    NUM_DUPS = 5
-# NUM_DUPS = 10
+    NUM_DUPS = 1
+# NUM_DUPS = 1
     main()
 

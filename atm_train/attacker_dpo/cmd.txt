@@ -28,14 +28,20 @@ accelerate launch --config_file ./acc.yaml --main_process_port 2950 train_dpo.py
 ^Like this for easier use
 
 python3 build_compare_dpo_data.py \
-    --input_score triviaqa_small_score.csv \
+    --input_score wikiset_score.csv \
     --input_docs wikiset_fab.csv \
     --ds_name wikiset_fab \
     --output wiki_dpo.jsonl
 
 
 python3 build_compare_dpo_data.py \
-    --input_score triviaqa_small_score.csv \
+    --input_score hotpot_style_score.csv \
     --input_docs hotpot_style_fab.csv \
     --ds_name hotpot_style_fab \
     --output hotpot_style_dpo.jsonl
+
+python3 build_compare_dpo_data.py \
+    --input_score triviaqa_fab_score.csv \
+    --input_docs triviaqa_fab.csv \
+    --ds_name triviaqa \
+    --output triviaqa_dpo.jsonl

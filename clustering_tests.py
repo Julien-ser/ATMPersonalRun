@@ -1,38 +1,36 @@
-# train.py
+import os
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
-import os
 
-def train(rank, world_size):
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
-    print(f"Running basic DDP example on rank {rank}.")
+def setup():
+    # Set up master address and port (adjust MASTER_ADDR to your master's IP)
+    os.environ['MASTER_ADDR'] = 'IP'  # Replace with your master machine IP
+    os.environ['MASTER_PORT'] = '12355'      # Free port
 
-    model = torch.nn.Linear(10, 1).cuda(rank)
-    ddp_model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank])
-
-    loss_fn = torch.nn.MSELoss()
-    optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.001)
-
-    for _ in range(10):
-        inputs = torch.randn(20, 10).cuda(rank)
-        labels = torch.randn(20, 1).cuda(rank)
-
-        optimizer.zero_grad()
-        outputs = ddp_model(inputs)
-        loss = loss_fn(outputs, labels)
-        loss.backward()
-        optimizer.step()
-
-        print(f"Rank {rank}, Loss: {loss.item()}")
-
-    dist.destroy_process_group()
-
-def run():
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
-    train(rank, world_size)
+
+    # Initialize the process group
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)  # Set the current device for the current rank
+
+    return rank
+
+def run():
+    rank = setup()
+
+    # Basic message to show that the rank is initialized correctly
+    print(f"[Rank {rank}] Initialized")
+
+    # Sync between ranks (simple all-reduce operation)
+    tensor = torch.ones(1).cuda(rank)
+    dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+
+    # Print out the result to verify communication
+    print(f"[Rank {rank}] All-reduced sum: {tensor.item()}")
+
+    # Clean up after run
+    dist.destroy_process_group()
 
 if __name__ == "__main__":
     run()

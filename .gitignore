@@ -12,6 +12,17 @@ atm_train/generator_sft/hotarrows
 atm_train/generator_sft/wikiarrows
 atm_train/attacker_build_data/arrows
 atm_train/attacker_build_data/datasets
+atm_train/generator_sft/hosts.cfg
+atm_train/generator_sft/arrows.zip
+atm_train/generator_sft/experiments
+atm_train/attacker_dpo/triviaqa_fab.jsonl
+atm_train/attacker_dpo/triviaqa_fab.csv
+atm_train/attacker_dpo/triviaqa_fab_score.csv
+atm_train/attacker_dpo/triviaqa_dpo.jsonl
+atm_train/ppl_infer/triviaqa_fab.jsonl
+atm_train/ppl_infer/triviaqa_fab.csv
+atm_train/ppl_infer/triviaqa_fab_score.csv
+atm_train/ppl_infer/wandb
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

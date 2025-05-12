@@ -1,0 +1,10 @@
+export GLOO_SOCKET_IFNAME=NAME
+export MASTER_ADDR=MASTER
+export MASTER_PORT=29500
+export WORLD_SIZE=4
+
+# Terminal 1 (Rank 0 - Master)
+RANK=0 python3 ddp_test.py
+
+# Terminal 2 (Rank 1 - Parameter Server)
+RANK=1 python3 ddp_test.py
