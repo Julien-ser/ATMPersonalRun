@@ -8,7 +8,7 @@ python3 generator_sft_data_prepare.py
 export PDSH_SSH_ARGS_APPEND="-i ~/.ssh/id_rsa"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync
-export MASTER_ADDR="10.1.74.122"  # The IP address of your master node
+export MASTER_ADDR="10.X.X.X"  # The IP address of your master node
 export MASTER_PORT=29500
 export RANK=1
 export WORLD_SIZE=2
