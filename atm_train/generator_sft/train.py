@@ -28,10 +28,42 @@ from torch.utils.tensorboard import SummaryWriter
 from transformers.integrations.deepspeed import HfDeepSpeedConfig
 import deepspeed
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+# Monkey patch the DeepSpeedCPUAdam class to avoid the ds_opt_adam error
+original_init = DeepSpeedCPUAdam.__init__
+
+def patched_init(self, *args, **kwargs):
+    try:
+        original_init(self, *args, **kwargs)
+    except Exception as e:
+        print(f"Caught exception in DeepSpeedCPUAdam.__init__: {e}")
+        # Add dummy attribute to avoid AttributeError in __del__
+        self.ds_opt_adam = None
+        self.opt_id = None
+
+DeepSpeedCPUAdam.__init__ = patched_init
+
+original_del = DeepSpeedCPUAdam.__del__
+
+def patched_del(self):
+    try:
+        if hasattr(self, 'ds_opt_adam'):
+            self.ds_opt_adam.destroy_adam(self.opt_id)
+    except Exception as e:
+        print(f"Error in DeepSpeedCPUAdam.__del__: {e}")
+
+# Apply the patch
+DeepSpeedCPUAdam.__del__ = patched_del
+
 from deepspeed.accelerator import get_accelerator
 import psutil
 import datetime
 import gc
+
+import torch.distributed as dist
+
+if dist.is_available() and not dist.is_initialized():
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        dist.init_process_group(backend="nccl")
 
 gc.collect()
 torch.cuda.empty_cache()
@@ -113,11 +145,13 @@ def parse_args():
 def main():
     args = parse_args()
     
-    deepspeed.init_distributed()
+    #deepspeed.init_distributed()
 
     assert not (args.bf16 and args.fp16)
         
     args.global_rank = torch.distributed.get_rank()
+    #args.global_rank = dist.get_rank() if dist.is_initialized() else 0
+
     
        
     print_rank_0(f'*****{torch.cuda.device_count()}*****')
@@ -130,12 +164,22 @@ def main():
     
     model = AutoModelForCausalLM.from_pretrained(
             args.model_name_or_path,
+            low_cpu_mem_usage=True,
             torch_dtype=torch.bfloat16 if args.bf16 else (torch.float16 if args.fp16 else torch.float32), trust_remote_code=True)
     model.config.pretraining_tp = 1
     #model = model.cuda()
-    #model = deepspeed.initialize(model=model, config=args.deepspeed_file)[0]
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
+    #model_engine, optimizer, _, _ = deepspeed.initialize(model=model, config=args.deepspeed_file)
+    model_engine, optimizer, _, _ = deepspeed.initialize(
+        args=args,
+        model=model,
+        model_parameters=model.parameters(),
+        config=args.deepspeed_file,
+    )
+    with open("model.txt", "w") as f:
+        f.write(str(model))
+    f.close()
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
     tokenizer.model_max_length = 256
     tokenizer.pad_token = tokenizer.eos_token
@@ -160,6 +204,7 @@ def main():
         output_dir=args.output_dir,
         save_strategy = "no",
         # do_eval=True,
+        max_grad_norm=1.0,
         learning_rate=args.learning_rate,
         gradient_checkpointing=args.gradient_checkpointing,
         per_device_train_batch_size=args.per_device_train_batch_size,
@@ -176,7 +221,7 @@ def main():
     )
     
     trainer = MemTrainer(#Seq2SeqTrainer(
-        model,
+        model_engine.module,
         training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
