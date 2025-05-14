@@ -82,8 +82,8 @@ class DPODataCollatorWithPadding:
 
     def __call__(self, features: List[Dict[str, Union[torch.Tensor, int]]]) -> Dict[str, Union[torch.Tensor, int]]:
         # First, find the longest sequence in the batch
-        print(f"[DPODataCollatorWithPadding] Input features: {type(features)}")
-        print(f"[DPODataCollatorWithPadding] Input features: {features}")
+        #print(f"[DPODataCollatorWithPadding] Input features: {type(features)}")
+        #print(f"[DPODataCollatorWithPadding] Input features: {features}")
         max_length = max(
             len(feature[k])
             for feature in features
@@ -124,12 +124,12 @@ class DPODataCollatorWithPadding:
                     ]
                 )
             if isinstance(features[0][k], str):
-                print(f"Key {k} contains string data. Skipping tensor conversion.")
+                #print(f"Key {k} contains string data. Skipping tensor conversion.")
                 batch[k] = [feature[k] for feature in features]  # Keep as a list of strings
             else:
                 batch[k] = torch.tensor([feature[k] for feature in features])
-        print(f"[Collator] Batch type: {type(batch)}")  # Should be Dict
-        print(f"[Collator] Batch keys: {batch.keys()}")
+        #print(f"[Collator] Batch type: {type(batch)}")  # Should be Dict
+        #print(f"[Collator] Batch keys: {batch.keys()}")
         return batch
 
 truncation_mode = 'keep_end'
@@ -301,7 +301,7 @@ def tokenize_row(feature, tokenizer):
                 continue
             batch[f"{k}{type_key}"] = tokens
 
-    print(f"[tokenize_row] Tokenized row: {type(batch)}")
+    #print(f"[tokenize_row] Tokenized row: {type(batch)}")
     return batch
 
 
@@ -625,8 +625,8 @@ class DPOTrainer(Trainer):
                     fn_kwargs={'tokenizer': self.tokenizer},
                     num_proc=self.dataset_num_proc
                 )
-                # Debugging: Print the first row of the tokenized dataset
-                print(f"[DPOTrainer] First row of tokenized train_dataset: {type(train_dataset[0])}")
+                # Debugging: #print the first row of the tokenized dataset
+                #print(f"[DPOTrainer] First row of tokenized train_dataset: {type(train_dataset[0])}")
                 
                 if eval_dataset is not None:
                     eval_dataset = eval_dataset.map(
@@ -634,8 +634,8 @@ class DPOTrainer(Trainer):
                         fn_kwargs={'tokenizer': self.tokenizer},
                         num_proc=self.dataset_num_proc
                     )
-                    # Debugging: Print the first row of the tokenized eval_dataset
-                    print(f"[DPOTrainer] First row of tokenized eval_dataset: {type(eval_dataset[0])}")
+                    # Debugging: #print the first row of the tokenized eval_dataset
+                    #print(f"[DPOTrainer] First row of tokenized eval_dataset: {type(eval_dataset[0])}")
 
         super().__init__(
             model=model,
@@ -751,9 +751,9 @@ class DPOTrainer(Trainer):
             self._precomputed_train_ref_log_probs = True
 
         dataloader = super().get_train_dataloader()
-        # Debugging: Print the first batch
+        # Debugging: #print the first batch
         for batch in dataloader:
-            print(f"[get_train_dataloader] First batch: {type(batch)}")
+            #print(f"[get_train_dataloader] First batch: {type(batch)}")
             break
         return dataloader
 
@@ -808,9 +808,9 @@ class DPOTrainer(Trainer):
             self._precomputed_eval_ref_log_probs = True
 
         dataloader = super().get_eval_dataloader(eval_dataset=eval_dataset)
-        # Debugging: Print the first batch
+        # Debugging: #print the first batch
         for batch in dataloader:
-            print(f"[get_eval_dataloader] First batch: {type(batch)}")
+            #print(f"[get_eval_dataloader] First batch: {type(batch)}")
             break
         return dataloader
 
@@ -864,189 +864,6 @@ class DPOTrainer(Trainer):
             attention_mask=answer_attention_mask,
         )
 
-    '''def tokenize_row(self, feature, model: Optional[Union[PreTrainedModel, nn.Module]] = None) -> Dict:
-        """Tokenize a single row from a DPO specific dataset.
-
-        At this stage, we don't convert to PyTorch tensors yet; we just handle the truncation
-        in case the prompt + chosen or prompt + rejected responses is/are too long. First
-            we truncate the prompt; if we're still too long, we truncate the chosen/rejected.
-
-        We also create the labels for the chosen/rejected responses, which are of length equal to
-            the sum of the length of the prompt and the chosen/rejected response, with
-            label_pad_token_id  for the prompt tokens.
-        """
-        #print("*********************************************I AM GETTING TOKENIZED******************************************")
-        batch = {}
-        prompt = feature["prompt"]
-        chosen = feature["chosen"]
-        rejected = feature["rejected"]
-
-        if not self.is_encoder_decoder:
-            # Check issues below for more details
-            #  1. https://github.com/huggingface/trl/issues/907
-            #  2. https://github.com/EleutherAI/lm-evaluation-harness/pull/531#issuecomment-1595586257
-            #  3. https://github.com/LianjiaTech/BELLE/issues/337
-
-            if not isinstance(prompt, str):
-                raise ValueError(f"prompt should be an str but got {type(prompt)}")
-            prompt_tokens = self.tokenizer(prompt, add_special_tokens=False)
-            prompt_tokens = {f"prompt_{k}": v for k, v in prompt_tokens.items()}
-
-            if not isinstance(chosen, str):
-                raise ValueError(f"chosen should be an str but got {type(chosen)}")
-            chosen_tokens = self.build_tokenized_answer(prompt, chosen)
-
-            if not isinstance(rejected, str):
-                raise ValueError(f"rejected should be an str but got {type(rejected)}")
-            rejected_tokens = self.build_tokenized_answer(prompt, rejected)
-
-            # Last prompt token might get merged by tokenizer and
-            # it should not be included for generation if that happens
-            prompt_len_input_ids = len(prompt_tokens["prompt_input_ids"])
-
-            chosen_prompt_len_input_ids = len(chosen_tokens["prompt_input_ids"])
-            rejected_prompt_len_input_ids = len(rejected_tokens["prompt_input_ids"])
-            prompt_len_input_ids = min(chosen_prompt_len_input_ids, rejected_prompt_len_input_ids)
-
-            for k, v in prompt_tokens.items():
-                prompt_tokens[k] = v[:prompt_len_input_ids]
-
-            # Make sure prompts only have one different token at most an
-            # and length only differs by 1 at most
-            num_diff_tokens = sum(
-                [a != b for a, b in zip(chosen_tokens["prompt_input_ids"], rejected_tokens["prompt_input_ids"])]
-            )
-            num_diff_len = abs(chosen_prompt_len_input_ids - rejected_prompt_len_input_ids)
-            if num_diff_tokens > 1 or num_diff_len > 1:
-                raise ValueError(
-                    "Chosen and rejected prompt_input_ids might only differ on the "
-                    "last token due to tokenizer merge ops."
-                )
-
-            # add BOS token to head of prompt
-            prompt_tokens["prompt_input_ids"] = [self.tokenizer.bos_token_id] + prompt_tokens["prompt_input_ids"]
-            chosen_tokens["prompt_input_ids"] = [self.tokenizer.bos_token_id] + chosen_tokens["prompt_input_ids"]
-            rejected_tokens["prompt_input_ids"] = [self.tokenizer.bos_token_id] + rejected_tokens["prompt_input_ids"]
-
-            prompt_tokens["prompt_attention_mask"] = [1] + prompt_tokens["prompt_attention_mask"]
-            chosen_tokens["prompt_attention_mask"] = [1] + chosen_tokens["prompt_attention_mask"]
-            rejected_tokens["prompt_attention_mask"] = [1] + rejected_tokens["prompt_attention_mask"]
-
-            # add EOS token to end of answer
-            chosen_tokens["input_ids"].append(self.tokenizer.eos_token_id)
-            chosen_tokens["attention_mask"].append(1)
-
-            rejected_tokens["input_ids"].append(self.tokenizer.eos_token_id)
-            rejected_tokens["attention_mask"].append(1)
-
-            longer_response_length = max(len(chosen_tokens["input_ids"]), len(rejected_tokens["input_ids"]))
-
-            # if combined sequence is too long, truncate the prompt
-            for answer_tokens in [chosen_tokens, rejected_tokens, prompt_tokens]:
-                if len(answer_tokens["prompt_input_ids"]) + longer_response_length > self.max_length:
-                    if self.truncation_mode == "keep_start":
-                        for k in ["prompt_input_ids", "prompt_attention_mask"]:
-                            answer_tokens[k] = answer_tokens[k][: self.max_prompt_length]
-                    elif self.truncation_mode == "keep_end":
-                        for k in ["prompt_input_ids", "prompt_attention_mask"]:
-                            answer_tokens[k] = answer_tokens[k][-self.max_prompt_length :]
-                    else:
-                        raise ValueError(f"Unknown truncation mode: {self.truncation_mode}")
-
-            # if that's still too long, truncate the response
-            for answer_tokens in [chosen_tokens, rejected_tokens]:
-                if len(answer_tokens["prompt_input_ids"]) + longer_response_length > self.max_length:
-                    for k in ["input_ids", "attention_mask"]:
-                        answer_tokens[k] = answer_tokens[k][: self.max_length - self.max_prompt_length]
-
-            # Create labels
-            chosen_sequence_tokens = {
-                k: chosen_tokens[f"prompt_{k}"] + chosen_tokens[k] for k in ["input_ids", "attention_mask"]
-            }
-            rejected_sequence_tokens = {
-                k: rejected_tokens[f"prompt_{k}"] + rejected_tokens[k] for k in ["input_ids", "attention_mask"]
-            }
-            chosen_sequence_tokens["labels"] = chosen_sequence_tokens["input_ids"][:]
-            chosen_sequence_tokens["labels"][: len(chosen_tokens["prompt_input_ids"])] = [
-                self.label_pad_token_id
-            ] * len(chosen_tokens["prompt_input_ids"])
-            rejected_sequence_tokens["labels"] = rejected_sequence_tokens["input_ids"][:]
-            rejected_sequence_tokens["labels"][: len(rejected_tokens["prompt_input_ids"])] = [
-                self.label_pad_token_id
-            ] * len(rejected_tokens["prompt_input_ids"])
-
-            for k, toks in {
-                "chosen_": chosen_sequence_tokens,
-                "rejected_": rejected_sequence_tokens,
-                "": prompt_tokens,
-            }.items():
-                for type_key, tokens in toks.items():
-                    if type_key == "token_type_ids":
-                        continue
-                    batch[f"{k}{type_key}"] = tokens
-
-        else:
-            chosen_tokens = self.tokenizer(
-                chosen, truncation=True, max_length=self.max_target_length, add_special_tokens=True
-            )
-            rejected_tokens = self.tokenizer(
-                rejected, truncation=True, max_length=self.max_target_length, add_special_tokens=True
-            )
-            prompt_tokens = self.tokenizer(
-                prompt, truncation=True, max_length=self.max_prompt_length, add_special_tokens=True
-            )
-
-            batch["chosen_labels"] = chosen_tokens["input_ids"]
-            batch["rejected_labels"] = rejected_tokens["input_ids"]
-            batch["prompt_input_ids"] = prompt_tokens["input_ids"]
-            batch["prompt_attention_mask"] = prompt_tokens["attention_mask"]
-
-            if model is not None and hasattr(model, "prepare_decoder_input_ids_from_labels"):
-                batch["rejected_decoder_input_ids"] = model.prepare_decoder_input_ids_from_labels(
-                    labels=torch.tensor(batch["rejected_labels"])
-                )
-                batch["chosen_decoder_input_ids"] = model.prepare_decoder_input_ids_from_labels(
-                    labels=torch.tensor(batch["chosen_labels"])
-                )
-
-        return batch
-'''
-    @contextmanager
-    def null_ref_context(self):
-        """Context manager for handling null reference model (that is, peft adapter manipulation)."""
-        with self.accelerator.unwrap_model(
-            self.model
-        ).disable_adapter() if self.is_peft_model and not self.ref_adapter_name else nullcontext():
-            if self.ref_adapter_name:
-                self.model.set_adapter(self.ref_adapter_name)
-            yield
-            if self.ref_adapter_name:
-                self.model.set_adapter(self.model_adapter_name or "default")
-
-    def compute_reference_log_probs(self, padded_batch: Dict) -> Dict:
-        """Computes log probabilities of the reference model for a single padded batch of a DPO specific dataset."""
-        compte_ref_context_manager = torch.cuda.amp.autocast if self._peft_has_been_casted_to_bf16 else nullcontext
-
-        # compute reference logps
-        with torch.no_grad(), compte_ref_context_manager():
-            if self.ref_model is None:
-                with self.null_ref_context():
-                    (
-                        reference_chosen_logps,
-                        reference_rejected_logps,
-                        _,
-                        _,
-                    ) = self.concatenated_forward(self.model, padded_batch)
-            else:
-                (
-                    reference_chosen_logps,
-                    reference_rejected_logps,
-                    _,
-                    _,
-                ) = self.concatenated_forward(self.ref_model, padded_batch)
-
-        return reference_chosen_logps, reference_rejected_logps
-
     @staticmethod
     def concatenated_inputs(
         batch: Dict[str, Union[List, torch.LongTensor]],
@@ -1054,71 +871,69 @@ class DPOTrainer(Trainer):
         label_pad_token_id: int = -100,
         padding_value: int = 0,
         device: Optional[torch.device] = None,
-        tokenizer: Any = None,
     ) -> Dict[str, torch.LongTensor]:
-        print(f"[concatenated_inputs] Batch received: {type(batch)}")
-        """Concatenate the chosen and rejected inputs into a single tensor.
-
-        Args:
-            batch: A batch of data. Must contain the keys 'chosen_input_ids' and 'rejected_input_ids', which are tensors of shape (batch_size, sequence_length).
-            is_encoder_decoder: Whether the model is an encoder-decoder model.
-            label_pad_token_id: The label pad token id.
-            padding_value: The padding value to use for the concatenated inputs_ids.
-            device: The device for the concatenated inputs.
-
-        Returns:
-            A dictionary containing the concatenated inputs under the key 'concatenated_input_ids'.
-        """
-        if(isinstance(batch, str)):
-            dummy_row = {"prompt": batch, "chosen": batch, "rejected": batch}
-            batch = tokenize_row(dummy_row, tokenizer)
-        
-        for k, v in batch.items():
-            if isinstance(v, list):
-                batch[k] = torch.tensor(v).unsqueeze(0)
+        """Handle MITO's specific batch format with adversarial prompts."""
         concatenated_batch = {}
-        if is_encoder_decoder:
-            max_length = max(batch["chosen_labels"].shape[1], batch["rejected_labels"].shape[1])
-            #max_length = max(len(batch["chosen_labels"]), len(batch["rejected_labels"]))
-        else:
-            max_length = max(batch["chosen_input_ids"].shape[1], batch["rejected_input_ids"].shape[1])
-            #max_length = max(len(batch["chosen_input_ids"]), len(batch["rejected_input_ids"]))
-    
 
-        for k in batch:
-            if k.startswith("chosen") and isinstance(batch[k], torch.Tensor):
-                if "labels" in k or is_encoder_decoder:
-                    pad_value = label_pad_token_id
-                elif k.endswith("_input_ids"):
-                    pad_value = padding_value
-                elif k.endswith("_attention_mask"):
-                    pad_value = 0
-                concatenated_key = k.replace("chosen", "concatenated")
-                concatenated_batch[concatenated_key] = pad_to_length(batch[k], max_length, pad_value=pad_value)
-        for k in batch:
-            if k.startswith("rejected") and isinstance(batch[k], torch.Tensor):
-                if "labels" in k or is_encoder_decoder:
-                    pad_value = label_pad_token_id
-                elif k.endswith("_input_ids"):
-                    pad_value = padding_value
-                elif k.endswith("_attention_mask"):
-                    pad_value = 0
-                concatenated_key = k.replace("rejected", "concatenated")
-                concatenated_batch[concatenated_key] = torch.cat(
-                    (
-                        concatenated_batch[concatenated_key],
-                        pad_to_length(batch[k], max_length, pad_value=pad_value),
-                    ),
-                    dim=0,
-                ).to(device=device)
+        # Convert lists to tensors if needed
+        def ensure_tensor(data):
+            if isinstance(data, list):
+                return torch.tensor(data, device=device)
+            return data.to(device)
 
-        if is_encoder_decoder:
-            concatenated_batch["concatenated_input_ids"] = batch["prompt_input_ids"].repeat(2, 1).to(device=device)
-            concatenated_batch["concatenated_attention_mask"] = (
-                batch["prompt_attention_mask"].repeat(2, 1).to(device=device)
+        # Ensure chosen and rejected inputs exist and have valid shapes
+        if "chosen_input_ids" not in batch or "rejected_input_ids" not in batch:
+            raise ValueError("Batch must contain 'chosen_input_ids' and 'rejected_input_ids'.")
+
+        chosen_inputs = ensure_tensor(batch["chosen_input_ids"])
+        rejected_inputs = ensure_tensor(batch["rejected_input_ids"])
+
+        # Add batch dimension if inputs are 1-dimensional
+        if chosen_inputs.ndim == 1:
+            chosen_inputs = chosen_inputs.unsqueeze(0)  # Add batch dimension
+        if rejected_inputs.ndim == 1:
+            rejected_inputs = rejected_inputs.unsqueeze(0)  # Add batch dimension
+
+        # Handle cases where inputs are still not 2-dimensional
+        if chosen_inputs.ndim < 2 or rejected_inputs.ndim < 2:
+            raise ValueError(
+                f"Expected 2D tensors for 'chosen_input_ids' and 'rejected_input_ids', "
+                f"but got shapes {chosen_inputs.shape} and {rejected_inputs.shape}."
             )
 
-        return concatenated_batch
+        # Get max length considering both chosen and rejected
+        max_length = max(chosen_inputs.shape[1], rejected_inputs.shape[1])  # Use second dimension for sequence length
+
+        # Process chosen/rejected pairs
+        for prefix in ["chosen", "rejected"]:
+            for key in ["input_ids", "attention_mask", "labels"]:
+                full_key = f"{prefix}_{key}"
+                if full_key not in batch:
+                    continue
+
+                data = ensure_tensor(batch[full_key])
+                pad_value = label_pad_token_id if key == "labels" else padding_value
+
+                # Add batch dimension if needed
+                if data.ndim == 1:
+                    data = data.unsqueeze(0)
+
+                # Debug: Log the shape of the data
+                #print(f"[concatenated_inputs] Key: {full_key}, Data Shape: {data.shape}")
+
+                # Pad and concatenate
+                try:
+                    padded = pad_to_length(data, max_length, pad_value, dim=1)  # Pad along sequence length
+                except:
+                    padded = pad_to_length(data, max_length, pad_value, dim=0)  # Pad along sequence length
+                if f"concatenated_{key}" in concatenated_batch:
+                    concatenated_batch[f"concatenated_{key}"] = torch.cat(
+                        [concatenated_batch[f"concatenated_{key}"], padded], dim=0  # Concatenate along batch dimension
+                    )
+                else:
+                    concatenated_batch[f"concatenated_{key}"] = padded
+
+        return {key: value.to(device) for key, value in concatenated_batch.items()} if device else concatenated_batch
 
     def dpo_loss(
         self,
@@ -1251,7 +1066,6 @@ class DPOTrainer(Trainer):
             label_pad_token_id=self.label_pad_token_id,
             padding_value=self.padding_value,
             device=self.accelerator.device,
-            tokenizer=self.tokenizer,
         )
         len_chosen = batch["chosen_labels"].shape[0]
 
@@ -1353,10 +1167,10 @@ class DPOTrainer(Trainer):
         return_outputs=False,
         **kwargs
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, torch.Tensor]]]:
-        print(f"[compute_loss] Inputs received: {type(inputs)}")
+        #print(f"[compute_loss] Inputs received: {type(inputs)}")
         
         if isinstance(inputs, str):
-            print("[compute_loss] Raw strings detected, tokenizing inputs...")
+            #print("[compute_loss] Raw strings detected, tokenizing inputs...")
             dummy_row = {"prompt": inputs, "chosen": inputs, "rejected": inputs}
             inputs = tokenize_row(dummy_row, self.tokenizer)
             #inputs = tokenize_row(inputs, self.tokenizer)
@@ -1436,16 +1250,16 @@ class DPOTrainer(Trainer):
     def get_batch_samples(self, batch: Dict[str, torch.Tensor], *args, **kwargs) -> Tuple[str, str]:
         """Generate samples from the model and reference model for the given batch of inputs."""
        
-        # Debug: Print all received arguments
+        # Debug: #print all received arguments
         import inspect
         frame = inspect.currentframe()
         args, _, _, values = inspect.getargvalues(frame)
-        print("Arguments received:", {arg: values[arg] for arg in args})
+        #print("Arguments received:", {arg: values[arg] for arg in args})
         if hasattr(batch, '__iter__') and not isinstance(batch, dict):
             batch = next(batch)  # Get first item from generator
     
-        print(f"Actual batch type: {type(batch)}")  # Verify it's now a dict
-        print(f"Batch keys: {batch.keys()}")  # Check available keys
+        #print(f"Actual batch type: {type(batch)}")  # Verify it's now a dict
+        #print(f"Batch keys: {batch.keys()}")  # Check available keys
         generate_context_manager = nullcontext if not self._peft_has_been_casted_to_bf16 else torch.cuda.amp.autocast
 
         with generate_context_manager():
@@ -1482,8 +1296,8 @@ class DPOTrainer(Trainer):
         reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
 
         with open("batch_samples_output.txt", "a") as f:
-            print("[Batch Samples] Policy output decoded:", policy_output_decoded)
-            print("[Batch Samples] Reference output decoded:", reference_output_decoded)
+            #print("[Batch Samples] Policy output decoded:", policy_output_decoded)
+            #print("[Batch Samples] Reference output decoded:", reference_output_decoded)
 
             f.write("[Batch Samples] Policy output decoded: " + str(policy_output_decoded) + "\n")
             f.write("[Batch Samples] Reference output decoded: " + str(reference_output_decoded) + "\n")
@@ -1499,8 +1313,8 @@ class DPOTrainer(Trainer):
         ignore_keys: Optional[List[str]] = None,
     ):
         
-        #print(f"[prediction_step] Inputs received: {inputs}")
-        print(f"[prediction_step] Input type: {type(inputs)}")
+        ##print(f"[prediction_step] Inputs received: {inputs}")
+        #print(f"[prediction_step] Input type: {type(inputs)}")
         if isinstance(inputs, dict):
             print(f"[prediction_step] Input keys: {inputs.keys()}")
         else:
@@ -1619,7 +1433,7 @@ class DPOTrainer(Trainer):
             random_batch = self.data_collator(random_batch_dataset)
             random_batch = self._prepare_inputs(random_batch)
 
-            print("[Random Batch]: ", type(random_batch))
+            #print("[Random Batch]: ", type(random_batch))
             with open("random_batch.txt", "a") as f:
                 f.write("[Random Batch]: " + str(random_batch) + "\n")
                 f.write("[Random Batch keys]: " + str(random_batch.keys()) + "\n")
@@ -1647,8 +1461,8 @@ class DPOTrainer(Trainer):
         )
 
         with open("eval_output.txt", "a") as f:
-            print("[evaluation_loop] Initial output:", type(initial_output))
-            print(f"[evaluation_loop] initial_output contents: {initial_output}")
+            #print("[evaluation_loop] Initial output:", type(initial_output))
+            #print(f"[evaluation_loop] initial_output contents: {initial_output}")
             
             f.write("[evaluation_loop] Initial output: " + str(type(initial_output)) + "\n")
             f.write(f"[evaluation_loop] initial_output contents: {initial_output}\n")

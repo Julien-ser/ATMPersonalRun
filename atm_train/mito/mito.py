@@ -350,8 +350,14 @@ class MITOTrainer(DPOTrainer):
             padding_value=self.padding_value,
             device=self.accelerator.device,
         )
-        len_chosen = len(batch["chosen_labels"])#.shape[0]
 
+        concatenated_input_ids = concatenated_batch["concatenated_input_ids"]
+        if isinstance(concatenated_input_ids, list):
+            concatenated_input_ids = torch.tensor(concatenated_input_ids, device=self.accelerator.device)
+
+        # Calculate len_chosen correctly
+        len_chosen = int(concatenated_input_ids.shape[0]) // 2
+        #print(f"Chungus: {len_chosen}")
         model_kwargs = (
             {
                 "labels": concatenated_batch["concatenated_labels"],
@@ -360,6 +366,11 @@ class MITOTrainer(DPOTrainer):
             if self.is_encoder_decoder
             else {}
         )
+        
+        for key in ["concatenated_input_ids", "concatenated_labels", "concatenated_attention_mask"]:
+            if concatenated_batch[key].ndim == 1:
+                concatenated_batch[key] = concatenated_batch[key].unsqueeze(0)  # Add batch dimension
+
 
         model_outputs = model(
             concatenated_batch["concatenated_input_ids"],
@@ -394,17 +405,28 @@ class MITOTrainer(DPOTrainer):
             is_encoder_decoder=self.is_encoder_decoder,
             label_pad_token_id=self.label_pad_token_id,
         )
-
+        #print(f"Chungus: {len_chosen}")
         chosen_logps = all_logps[:len_chosen]
         rejected_logps = all_logps[len_chosen:]
 
-        chosen_logits = all_logits[:len_chosen]
-        rejected_logits = all_logits[len_chosen:]
-
+        #chosen_logits = all_logits[:len_chosen]
+        #rejected_logits = all_logits[len_chosen:]
+        chosen_logits = all_logits[:, :len_chosen, :]
+        rejected_logits = all_logits[:, len_chosen:, :]
         chosen_loss = all_losses[:len_chosen]
         rejected_loss = all_losses[len_chosen:]
+        #print(f"Logps_shapes: {all_logps.shape}")
+        #chosen_logps = all_logps[:, :len_chosen, :]
+        #rejected_logps = all_logps[:, len_chosen:, :]
+        #print(f"all loss shapes: {all_losses.shape}")
+        #chosen_loss = all_losses[:, :len_chosen]
+        #rejected_loss = all_losses[:, len_chosen:]
 
         model_loss = model_outputs.loss
+        #print("all_logits: ", all_logits)
+        #print("SHAPE: ", all_logits.shape)
+        #print("============================================skibidi=====================================")
+        #print("REJECTED_LOGITS: ", rejected_logits)
         return (chosen_logps, rejected_logps, chosen_logits, rejected_logits, chosen_loss, rejected_loss, model_loss)
 
 
@@ -426,6 +448,21 @@ class MITOTrainer(DPOTrainer):
             policy_rejected_loss,
             policy_model_loss,
         ) = self.concatenated_forward(model, batch)
+
+        with open("policy_outputs.txt", "w") as f:
+            f.write("POLICY_CHOSEN_LOGPS:\n" + str(policy_chosen_logps) + "\n")
+            f.write("=" * 50 + "\n")
+            f.write("POLICY_REJECTED_LOGPS:\n" + str(policy_rejected_logps) + "\n")
+            f.write("=" * 50 + "\n")
+            f.write("POLICY_CHOSEN_LOGITS:\n" + str(policy_chosen_logits) + "\n")
+            f.write("=" * 50 + "\n")
+            f.write("POLICY_REJECTED_LOGITS:\n" + str(policy_rejected_logits) + "\n")
+            f.write("=" * 50 + "\n")
+            f.write("POLICY_CHOSEN_LOSS:\n" + str(policy_chosen_loss) + "\n")
+            f.write("=" * 50 + "\n")
+            f.write("POLICY_REJECTED_LOSS:\n" + str(policy_rejected_loss) + "\n")
+            f.write("=" * 50 + "\n")
+            f.write("POLICY_MODEL_LOSS:\n" + str(policy_model_loss) + "\n")
 
         # if reference_chosen_logps and reference_rejected_logps in batch use them, otherwise use the reference model
         if "reference_chosen_logps" in batch and "reference_rejected_logps" in batch:
@@ -461,6 +498,14 @@ class MITOTrainer(DPOTrainer):
 
         rejected_sft_losses = policy_rejected_loss
 
+        with open("logits.txt", "w") as f:
+            f.write(str(policy_chosen_logps))
+            f.write("\n=================================================\n")
+            f.write(str(policy_chosen_logits))
+            f.write("\n=================================================\n")
+            f.write(str(policy_rejected_logps))
+            f.write("\n=================================================\n")
+            f.write(str(policy_rejected_logits))
         pol_kl_losses = self.mito_loss(
             # policy_chosen_logits,
             policy_chosen_logits,
@@ -469,7 +514,6 @@ class MITOTrainer(DPOTrainer):
             batch['rejected_labels']
             # reference_rejected_logits,
         )
-
         ref_kl_losses = self.mito_loss(
             # policy_chosen_logits,
             reference_chosen_logits,
@@ -519,30 +563,56 @@ class MITOTrainer(DPOTrainer):
 
     def mito_loss(
             self,
-            # policy_chosen_logits,
             pred_logits,
             target_logits,
             pred_labels,
             target_labels,
-        ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+        ) -> torch.FloatTensor:
 
+        if isinstance(pred_labels, list):
+            pred_labels = torch.tensor(pred_labels, device=pred_logits.device)
+        if isinstance(target_labels, list):
+            target_labels = torch.tensor(target_labels, device=target_logits.device)
+
+        with open("mitoloss.txt", "w") as f:
+            f.write("PRED_LOGITS: " + str(pred_logits))
+            f.write("\n=================================================\n")
+            f.write("TARGET_LOGITS: " + str(target_logits))
+            f.write("\n=================================================\n")
+            f.write("PRED_LABELS: " + str(pred_labels))
+            f.write("\n=================================================\n")
+            f.write("TARGET_LABELS: " + str(target_labels))
+        f.close()
+        # Skip if logits are empty
+        if pred_logits.size(0) == 0 or target_logits.size(0) == 0:
+            raise ValueError("Empty logits detected. Check input data or tokenization.")
+    
+        # Align dimensions of labels and logits
+        if pred_labels.ndim == 1:
+            #pred_labels = pred_labels.unsqueeze(1).expand_as(pred_logits[..., 0])
+            pred_labels = pred_labels.view_as(pred_logits[..., 0])
+        if target_labels.ndim == 1:
+            #target_labels = target_labels.unsqueeze(1).expand_as(target_logits[..., 0])
+            target_labels = target_labels.view_as(target_logits[..., 0])
+
+        # Mask logits where labels are -100
         pred_logits = pred_logits.masked_fill(
             (pred_labels == -100).unsqueeze(-1), torch.finfo(pred_logits.dtype).min
         )
-
         target_logits = target_logits.masked_fill(
             (target_labels == -100).unsqueeze(-1), torch.finfo(target_logits.dtype).min
         )
 
-
+        # Compute probabilities
         tar_prob = target_logits.view(-1, target_logits.shape[-1]).contiguous()
         pred_prob = pred_logits.view(-1, pred_logits.shape[-1]).contiguous()
-        
+
         tar_prob = F.softmax(tar_prob, dim=1)
         pred_prob = F.log_softmax(pred_prob, dim=1)
-        
+
+        # Compute KL divergence
         kl_loss = self.kldiv_loss(pred_prob, tar_prob)
-        
+
         return kl_loss
 
     @staticmethod
@@ -553,20 +623,37 @@ class MITOTrainer(DPOTrainer):
         padding_value: int = 0,
         device: Optional[torch.device] = None,
     ) -> Dict[str, torch.LongTensor]:
-        """Handle MITO's specific batch format with adversarial prompts"""
+        """Handle MITO's specific batch format with adversarial prompts."""
         concatenated_batch = {}
-        
+
         # Convert lists to tensors if needed
         def ensure_tensor(data):
             if isinstance(data, list):
-                return torch.tensor(data)
-            return data
-            
-        # Get max length considering both chosen and rejected
+                return torch.tensor(data, device=device)
+            return data.to(device)
+
+        # Ensure chosen and rejected inputs exist and have valid shapes
+        if "chosen_input_ids" not in batch or "rejected_input_ids" not in batch:
+            raise ValueError("Batch must contain 'chosen_input_ids' and 'rejected_input_ids'.")
+
         chosen_inputs = ensure_tensor(batch["chosen_input_ids"])
         rejected_inputs = ensure_tensor(batch["rejected_input_ids"])
-        print(chosen_inputs.shape, rejected_inputs.shape)
-        max_length = max(chosen_inputs.shape[0], rejected_inputs.shape[0])
+
+        if chosen_inputs.ndim == 1:
+            chosen_inputs = chosen_inputs.unsqueeze(0)  # Add batch dimension
+        if rejected_inputs.ndim == 1:
+            rejected_inputs = rejected_inputs.unsqueeze(0)  # Add batch dimension
+
+
+        # Handle cases where inputs are empty or 1-dimensional
+        if chosen_inputs.ndim < 2 or rejected_inputs.ndim < 2:
+            raise ValueError(
+                f"Expected 2D tensors for 'chosen_input_ids' and 'rejected_input_ids', "
+                f"but got shapes {chosen_inputs.shape} and {rejected_inputs.shape}."
+            )
+
+        # Get max length considering both chosen and rejected
+        max_length = max(chosen_inputs.shape[1], rejected_inputs.shape[1])  # Use second dimension for sequence length
 
         # Process chosen/rejected pairs
         for prefix in ["chosen", "rejected"]:
@@ -574,22 +661,26 @@ class MITOTrainer(DPOTrainer):
                 full_key = f"{prefix}_{key}"
                 if full_key not in batch:
                     continue
-                    
+
                 data = ensure_tensor(batch[full_key])
                 pad_value = label_pad_token_id if key == "labels" else padding_value
-                
-                # Pad and concatenate
-                padded = pad_to_length(data, max_length, pad_value)
+
+                # Pad and concatenate'
+                try:
+                    padded = pad_to_length(data, max_length, pad_value, dim=1)  # Pad along sequence length
+                except:
+                    padded = pad_to_length(data, max_length, pad_value, dim=0)
                 if f"concatenated_{key}" in concatenated_batch:
                     concatenated_batch[f"concatenated_{key}"] = torch.cat(
-                        [concatenated_batch[f"concatenated_{key}"], padded]
+                        [concatenated_batch[f"concatenated_{key}"], padded], dim=0  # Concatenate along batch dimension
                     )
                 else:
                     concatenated_batch[f"concatenated_{key}"] = padded
-        
-        return {key: value.to(device) for key, value in concatenated_batch.items()} if device else concatenated_batch
-        #return concatenated_batch#.to(device=device) if device else concatenated_batch
-        
+        #print(f"Chosen inputs shape: {chosen_inputs.shape}")
+        #print(f"Rejected inputs shape: {rejected_inputs.shape}")
+        #print(f"Concatenated batch size: {concatenated_batch['concatenated_input_ids'].shape[0]}")
+
+        return concatenated_batch
 
 def mito_tokenize_row(feature, tokenizer) -> Dict:
     """Tokenize a single row from a DPO-specific dataset.
@@ -606,6 +697,7 @@ def mito_tokenize_row(feature, tokenizer) -> Dict:
     adv_prompt = feature["adv_prompt"]
     prompt = feature["prompt"]
     answer = feature["answer"]
+    rejected = feature["rejected"]
 
     label_pad_token_id = -100
 
@@ -622,6 +714,7 @@ def mito_tokenize_row(feature, tokenizer) -> Dict:
     prompt_encs = tokenizer([prompt, prompt], padding=True, add_special_tokens=False)
     adv_prompt_encs = tokenizer(adv_prompt, add_special_tokens=False)
     answer_encs = tokenizer(answer, add_special_tokens=False)
+    rejected_encs = tokenizer(rejected, add_special_tokens=False)
 
     # Add EOS token to the answer
     answer_encs["input_ids"].append(tokenizer.eos_token_id)
@@ -639,12 +732,16 @@ def mito_tokenize_row(feature, tokenizer) -> Dict:
     answer_encs["input_ids"] = [tokenizer.bos_token_id] + answer_encs["input_ids"]
     answer_encs["attention_mask"] = [1] + answer_encs["attention_mask"]
 
+    rejected_encs["input_ids"] = [tokenizer.bos_token_id] + rejected_encs["input_ids"]
+    rejected_encs["attention_mask"] = [1] + rejected_encs["attention_mask"]
+
     # Create chosen (answer) and rejected (adv_prompt) sequences
     chosen_sequence_tokens = {
-        k: prompt_encs["input_ids"][0] + answer_encs[k] for k in ["input_ids", "attention_mask"]
+        k: prompt_encs["input_ids"][0] + adv_prompt_encs[k] for k in ["input_ids", "attention_mask"]
     }
     rejected_sequence_tokens = {
-        k: prompt_encs["input_ids"][1] + adv_prompt_encs[k] for k in ["input_ids", "attention_mask"]
+        k: prompt_encs["input_ids"][1] + rejected_encs[k] for k in ["input_ids", "attention_mask"]
+        #k: prompt_encs["input_ids"][1] + rejected_encs[k] for k in ["input_ids", "attention_mask"]
     }
 
     # Create labels for chosen and rejected

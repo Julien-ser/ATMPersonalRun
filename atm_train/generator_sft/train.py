@@ -231,7 +231,7 @@ def main():
     )
     
     trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
-    trainer.save_model(os.path.join(args.output_dir, "model_final"))
+    trainer.save_model(os.path.join(args.output_dir, "model_final_tinyL"))
 
     trainer.evaluate()
 

@@ -41,17 +41,18 @@ import json
 
 # Load dpo_data (prompt + chosen)
 dpo_entries = []
-with open("_dpo.jsonl", "r") as f:
+with open("hot_dpo.jsonl", "r") as f:
     for line in f:
         entry = json.loads(line)
         dpo_entries.append({
             "prompt": entry["prompt"],
-            "adv_prompt": entry["chosen"]  # Treat 'chosen' as adversarial prompt
+            "adv_prompt": entry["chosen"],  # Treat 'chosen' as adversarial prompt
+            "rejected": entry["rejected"]  # Include rejected for completeness
         })
 
 # Load query_data (answers)
 query_answers = []
-with open("triviaqa_small_fab.jsonl", "r") as f:
+with open("hot_fab.jsonl", "r") as f:
     for line in f:
         entry = json.loads(line)
         if entry["answers"]:  # Ensure answers exist
@@ -64,10 +65,11 @@ for dpo_entry, answer in zip(dpo_entries, query_answers):
     mito_data.append({
         "prompt": dpo_entry["prompt"],
         "adv_prompt": dpo_entry["adv_prompt"],
+        "rejected": dpo_entry["rejected"],
         "answer": answer  # From query_data
     })
 
 
-with open("mito_merged.jsonl", "w") as f:
+with open("mito_merged_hot.jsonl", "w") as f:
     for entry in mito_data:
         f.write(json.dumps(entry) + "\n")

@@ -24,6 +24,15 @@ atm_train/ppl_infer/triviaqa_fab.csv
 atm_train/ppl_infer/triviaqa_fab_score.csv
 atm_train/ppl_infer/wandb
 atm_train/attacker_dpo/triviaqa.jsonl
+atm_train/mito/hot_dpo.jsonl
+atm_train/mito/hot_fab.jsonl
+atm_train/mito/mito_merged_hot.jsonl
+atm_train/mito/hot.jsonl
+atm_train/mito/experiments
+atm_train/mito.zip
+atm_train/generator_sft/hotarrows.zip
+atm_train/generator_sft/wikiarrows.zip
+atm_train/attacker_dpo/experiments
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

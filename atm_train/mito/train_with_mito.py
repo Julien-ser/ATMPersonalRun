@@ -104,7 +104,7 @@ def main():
         raw_datasets = raw_datasets.map(mito_tokenize_row, fn_kwargs={'tokenizer': tokenizer}, num_proc=8)
 
 
-    print(raw_datasets)
+    #print(raw_datasets)
     #####################################
     # Load tokenizer and process datasets
 
@@ -121,7 +121,7 @@ def main():
     ref_model = model
     ref_model_kwargs = model_kwargs
 
-
+    
     training_args = Seq2SeqTrainingArguments(
         output_dir=args.output_dir,
         save_strategy = "no",

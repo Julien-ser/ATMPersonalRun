@@ -1,8 +1,8 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # Load tokenizer and model
-tokenizer = AutoTokenizer.from_pretrained("Doctor-Shotgun/TinyLlama-1.1B-32k-Instruct")
-model = AutoModelForCausalLM.from_pretrained("Doctor-Shotgun/TinyLlama-1.1B-32k-Instruct")
+tokenizer = AutoTokenizer.from_pretrained("ministral/Ministral-3b-instruct")#("Doctor-Shotgun/TinyLlama-1.1B-32k-Instruct")
+model = AutoModelForCausalLM.from_pretrained("ministral/Ministral-3b-instruct")#("Doctor-Shotgun/TinyLlama-1.1B-32k-Instruct")
 
 # Save model and tokenizer in the desired directory
 save_path = "pretrained_models/SLite"
