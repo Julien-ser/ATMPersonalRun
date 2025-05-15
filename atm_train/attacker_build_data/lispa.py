@@ -17,7 +17,7 @@ def load_jsonl_and_generate_tree(file_path):
         return json_tree(first_line)
 # Replace with your file path
 
-tree = load_jsonl_and_generate_tree('triviaqa_small_fab.jsonl')
+tree = load_jsonl_and_generate_tree('mito_merged_hot.jsonl')
 
 
 # Print the tree in JSON format

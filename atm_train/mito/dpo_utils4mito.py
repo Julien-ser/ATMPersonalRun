@@ -942,75 +942,71 @@ class DPOTrainer(Trainer):
         reference_chosen_logps: torch.FloatTensor,
         reference_rejected_logps: torch.FloatTensor,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
-        """Compute the DPO loss for a batch of policy and reference model log probabilities.
+        """Compute the DPO loss with numerical safeguards."""
+        
+        # 1. Input validation
+        if torch.isnan(policy_chosen_logps).any() or torch.isnan(policy_rejected_logps).any():
+            raise ValueError("NaN detected in policy log probabilities")
+        
+        if not self.reference_free and (torch.isnan(reference_chosen_logps).any() or torch.isnan(reference_rejected_logps).any()):
+            raise ValueError("NaN detected in reference log probabilities")
 
-        Args:
-            policy_chosen_logps: Log probabilities of the policy model for the chosen responses. Shape: (batch_size,)
-            policy_rejected_logps: Log probabilities of the policy model for the rejected responses. Shape: (batch_size,)
-            reference_chosen_logps: Log probabilities of the reference model for the chosen responses. Shape: (batch_size,)
-            reference_rejected_logps: Log probabilities of the reference model for the rejected responses. Shape: (batch_size,)
-
-        Returns:
-            A tuple of three tensors: (losses, chosen_rewards, rejected_rewards).
-            The losses tensor contains the DPO loss for each example in the batch.
-            The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
-        """
+        # 2. Compute log ratios with safeguards
         pi_logratios = policy_chosen_logps - policy_rejected_logps
         if self.reference_free:
-            ref_logratios = torch.tensor([0], dtype=pi_logratios.dtype, device=pi_logratios.device)
+            ref_logratios = torch.zeros_like(pi_logratios)
         else:
             ref_logratios = reference_chosen_logps - reference_rejected_logps
+        
+        # 3. Clamp log ratios to prevent extreme values
+        max_log_ratio = 10.0  # Empirical value - adjust based on your data
+        pi_logratios = torch.clamp(pi_logratios, -max_log_ratio, max_log_ratio)
+        ref_logratios = torch.clamp(ref_logratios, -max_log_ratio, max_log_ratio)
 
-        pi_logratios = pi_logratios.to(self.accelerator.device)
-        ref_logratios = ref_logratios.to(self.accelerator.device)
         logits = pi_logratios - ref_logratios
-
-        # The beta is a temperature parameter for the DPO loss, typically something in the range of 0.1 to 0.5.
-        # We ignore the reference model as beta -> 0. The label_smoothing parameter encodes our uncertainty about the labels and
-        # calculates a conservative DPO loss.
+        
+        # 4. Compute loss with type-specific safeguards
         if self.loss_type == "sigmoid":
             losses = (
                 -F.logsigmoid(self.beta * logits) * (1 - self.label_smoothing)
                 - F.logsigmoid(-self.beta * logits) * self.label_smoothing
             )
+            # Clamp sigmoid inputs to prevent underflow
+            losses = torch.clamp(losses, min=-100, max=100)
+            
         elif self.loss_type == "hinge":
             losses = torch.relu(1 - self.beta * logits)
+            # No need for clamping with ReLU
+            
         elif self.loss_type == "ipo":
-            # eqn (17) of the paper where beta is the regularization parameter for the IPO loss, denoted by tau in the paper.
-            losses = (logits - 1 / (2 * self.beta)) ** 2
+            losses = (logits - 1/(2 * self.beta)) ** 2
+            losses = torch.clamp(losses, max=100)  # Prevent extreme outliers
+            
         elif self.loss_type == "kto_pair":
-            # eqn (7) of the HALOs paper
-            chosen_KL = (policy_chosen_logps - reference_chosen_logps).mean().clamp(min=0)
-            rejected_KL = (policy_rejected_logps - reference_rejected_logps).mean().clamp(min=0)
-
-            chosen_logratios = policy_chosen_logps - reference_chosen_logps
-            rejected_logratios = policy_rejected_logps - reference_rejected_logps
-            # As described in the KTO report, the KL term for chosen (rejected) is estimated using the rejected (chosen) half.
+            chosen_KL = (policy_chosen_logps - reference_chosen_logps).mean().clamp(min=0, max=10)
+            rejected_KL = (policy_rejected_logps - reference_rejected_logps).mean().clamp(min=0, max=10)
+            
+            chosen_logratios = (policy_chosen_logps - reference_chosen_logps).clamp(-max_log_ratio, max_log_ratio)
+            rejected_logratios = (policy_rejected_logps - reference_rejected_logps).clamp(-max_log_ratio, max_log_ratio)
+            
             losses = torch.cat(
                 (
-                    1 - F.sigmoid(self.beta * (chosen_logratios - rejected_KL)),
-                    1 - F.sigmoid(self.beta * (chosen_KL - rejected_logratios)),
+                    (1 - F.sigmoid(self.beta * (chosen_logratios - rejected_KL))).clamp(0, 1),
+                    (1 - F.sigmoid(self.beta * (chosen_KL - rejected_logratios))).clamp(0, 1),
                 ),
                 0,
             )
-        else:
-            raise ValueError(
-                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'hinge', 'ipo', 'kto_pair']"
-            )
-
+        
+        # 5. Final output safeguards
+        losses = torch.clamp(losses, min=1e-5, max=1e5)  # Absolute safety bounds
+        
         chosen_rewards = (
-            self.beta
-            * (
-                policy_chosen_logps.to(self.accelerator.device) - reference_chosen_logps.to(self.accelerator.device)
-            ).detach()
-        )
+            self.beta * (policy_chosen_logps - reference_chosen_logps).detach()
+        ).clamp(-10, 10)
+        
         rejected_rewards = (
-            self.beta
-            * (
-                policy_rejected_logps.to(self.accelerator.device)
-                - reference_rejected_logps.to(self.accelerator.device)
-            ).detach()
-        )
+            self.beta * (policy_rejected_logps - reference_rejected_logps).detach()
+        ).clamp(-10, 10)
 
         return losses, chosen_rewards, rejected_rewards
 
@@ -1106,8 +1102,8 @@ class DPOTrainer(Trainer):
         batch: Dict[str, Union[List, torch.LongTensor]],
         train_eval: Literal["train", "eval"] = "train",
     ):
-        with open("debug_batch_loss_met.txt", "w") as f:
-            f.write(str(batch))
+        '''with open("debug_batch_loss_met.txt", "w") as f:
+            f.write(str(batch))'''
         """Compute the DPO loss and other metrics for the given batch of inputs for train or test."""
         metrics = {}
 
@@ -1125,7 +1121,8 @@ class DPOTrainer(Trainer):
         else:
             with torch.no_grad():
                 if self.ref_model is None:
-                    with self.null_ref_context():
+                    #with self.null_ref_context():
+                    with nullcontext():
                         (
                             reference_chosen_logps,
                             reference_rejected_logps,
@@ -1175,12 +1172,12 @@ class DPOTrainer(Trainer):
             inputs = tokenize_row(dummy_row, self.tokenizer)
             #inputs = tokenize_row(inputs, self.tokenizer)
 
-        with open("debug_batch_inputs.txt", "w") as f:
+        '''with open("debug_batch_inputs.txt", "w") as f:
             # Write the function arguments including the model, inputs, return_outputs, and kwargs
             f.write(f"Model: {str(model)}\n")
             f.write(f"Inputs: {str(inputs)}\n")
             f.write(f"Return outputs: {return_outputs}\n")
-            f.write(f"Additional kwargs: {str(kwargs)}\n")
+            f.write(f"Additional kwargs: {str(kwargs)}\n")'''
         if not self.use_dpo_data_collator:
             warnings.warn(
                 "compute_loss is only implemented for DPODataCollatorWithPadding, and you passed a datacollator that is different than "
@@ -1272,7 +1269,8 @@ class DPOTrainer(Trainer):
             )
 
             if self.ref_model is None:
-                with self.null_ref_context():
+                #with self.null_ref_context():
+                with nullcontext():
                     reference_output = self.model.generate(
                         input_ids=batch["chosen_input_ids"],
                         attention_mask=batch["chosen_attention_mask"],
@@ -1295,13 +1293,13 @@ class DPOTrainer(Trainer):
         reference_output = pad_to_length(reference_output, self.max_length, self.tokenizer.pad_token_id)
         reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
 
-        with open("batch_samples_output.txt", "a") as f:
+        ''' with open("batch_samples_output.txt", "a") as f:
             #print("[Batch Samples] Policy output decoded:", policy_output_decoded)
             #print("[Batch Samples] Reference output decoded:", reference_output_decoded)
 
             f.write("[Batch Samples] Policy output decoded: " + str(policy_output_decoded) + "\n")
             f.write("[Batch Samples] Reference output decoded: " + str(reference_output_decoded) + "\n")
-
+        '''
         return policy_output_decoded, reference_output_decoded
 
     def prediction_step(
@@ -1434,9 +1432,9 @@ class DPOTrainer(Trainer):
             random_batch = self._prepare_inputs(random_batch)
 
             #print("[Random Batch]: ", type(random_batch))
-            with open("random_batch.txt", "a") as f:
+            '''with open("random_batch.txt", "a") as f:
                 f.write("[Random Batch]: " + str(random_batch) + "\n")
-                f.write("[Random Batch keys]: " + str(random_batch.keys()) + "\n")
+                f.write("[Random Batch keys]: " + str(random_batch.keys()) + "\n")'''
             #policy_output_decoded, ref_output_decoded = self.get_batch_samples(self.model, random_batch)
             policy_output_decoded, ref_output_decoded = self.get_batch_samples(random_batch)
             #data = {"prompt":policy_output_decoded, "chosen": ref_output_decoded, "rejected": ref_output_decoded}   
@@ -1460,12 +1458,12 @@ class DPOTrainer(Trainer):
             dataloader, description, prediction_loss_only, ignore_keys, metric_key_prefix
         )
 
-        with open("eval_output.txt", "a") as f:
+        '''with open("eval_output.txt", "a") as f:
             #print("[evaluation_loop] Initial output:", type(initial_output))
             #print(f"[evaluation_loop] initial_output contents: {initial_output}")
             
             f.write("[evaluation_loop] Initial output: " + str(type(initial_output)) + "\n")
-            f.write(f"[evaluation_loop] initial_output contents: {initial_output}\n")
+            f.write(f"[evaluation_loop] initial_output contents: {initial_output}\n")'''
         return initial_output
 
     def log(self, logs: Dict[str, float], step: Optional[int] = None) -> None:

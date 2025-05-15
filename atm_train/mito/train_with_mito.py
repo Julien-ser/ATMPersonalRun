@@ -30,7 +30,17 @@ import re
 from datasets import Dataset, load_dataset
 from transformers import MODEL_FOR_CAUSAL_LM_MAPPING, HfArgumentParser
 from mito import mito_tokenize_row
+from peft import LoraConfig
 
+# Define LoRA configuration
+lora_config = LoraConfig(
+    r=8,
+    lora_alpha=32,
+    target_modules=["q_proj", "v_proj"],
+    lora_dropout=0.1,
+    bias="none",
+    task_type="CAUSAL_LM",
+)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Finetune a transformers model on a causal language modeling task")
@@ -118,8 +128,8 @@ def main():
 
     model = args.model_name_or_path
 
-    ref_model = model
-    ref_model_kwargs = model_kwargs
+    ref_model = None #model
+    ref_model_kwargs = None #model_kwargs
 
     
     training_args = Seq2SeqTrainingArguments(
@@ -141,6 +151,7 @@ def main():
         deepspeed=args.deepspeed_file,
         lr_scheduler_type=args.lr_scheduler_type,
         warmup_ratio=args.warmup_ratio,
+        max_grad_norm=1.0,
     )
 
     #########################
@@ -159,7 +170,8 @@ def main():
         max_length=args.max_length,
         max_prompt_length=args.max_prompt_length,
         dataset_num_proc=8,
-        loss_type='mito'
+        loss_type='mito',
+        peft_config=lora_config,
         # data_collator=MITODataCollatorWithPadding()
     )
 

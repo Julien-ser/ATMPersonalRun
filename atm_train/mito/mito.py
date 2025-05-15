@@ -26,7 +26,7 @@ from transformers import (
 )
 from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import EvalLoopOutput
-from peft import PeftModel, get_peft_model, prepare_model_for_kbit_training
+from peft import PeftModel, get_peft_model, prepare_model_for_kbit_training, LoraConfig
 
 from transformers.utils import is_peft_available
 from transformers.integrations import is_wandb_available
@@ -449,7 +449,7 @@ class MITOTrainer(DPOTrainer):
             policy_model_loss,
         ) = self.concatenated_forward(model, batch)
 
-        with open("policy_outputs.txt", "w") as f:
+        '''with open("policy_outputs.txt", "w") as f:
             f.write("POLICY_CHOSEN_LOGPS:\n" + str(policy_chosen_logps) + "\n")
             f.write("=" * 50 + "\n")
             f.write("POLICY_REJECTED_LOGPS:\n" + str(policy_rejected_logps) + "\n")
@@ -462,7 +462,7 @@ class MITOTrainer(DPOTrainer):
             f.write("=" * 50 + "\n")
             f.write("POLICY_REJECTED_LOSS:\n" + str(policy_rejected_loss) + "\n")
             f.write("=" * 50 + "\n")
-            f.write("POLICY_MODEL_LOSS:\n" + str(policy_model_loss) + "\n")
+            f.write("POLICY_MODEL_LOSS:\n" + str(policy_model_loss) + "\n")'''
 
         # if reference_chosen_logps and reference_rejected_logps in batch use them, otherwise use the reference model
         if "reference_chosen_logps" in batch and "reference_rejected_logps" in batch:
@@ -471,7 +471,8 @@ class MITOTrainer(DPOTrainer):
         else:
             with torch.no_grad():
                 if self.ref_model is None:
-                    with self.null_ref_context():
+                    #with self.null_ref_context():
+                    with nullcontext():
                         (
                             reference_chosen_logps,
                             reference_rejected_logps,
@@ -498,14 +499,14 @@ class MITOTrainer(DPOTrainer):
 
         rejected_sft_losses = policy_rejected_loss
 
-        with open("logits.txt", "w") as f:
+        '''with open("logits.txt", "w") as f:
             f.write(str(policy_chosen_logps))
             f.write("\n=================================================\n")
             f.write(str(policy_chosen_logits))
             f.write("\n=================================================\n")
             f.write(str(policy_rejected_logps))
             f.write("\n=================================================\n")
-            f.write(str(policy_rejected_logits))
+            f.write(str(policy_rejected_logits))'''
         pol_kl_losses = self.mito_loss(
             # policy_chosen_logits,
             policy_chosen_logits,
@@ -523,8 +524,13 @@ class MITOTrainer(DPOTrainer):
             # reference_rejected_logits,
         )
         
-        # losses = kl_losses + policy_chosen_loss + policy_rejected_loss
-        losses =  policy_chosen_loss + self.beta * (pol_kl_losses - ref_kl_losses)
+
+        # Before computing final loss
+        pol_kl_losses = torch.clamp(pol_kl_losses, min=-100, max=100)
+        ref_kl_losses = torch.clamp(ref_kl_losses, min=-100, max=100)
+        policy_chosen_loss = torch.clamp(policy_chosen_loss, min=-100, max=100)
+
+        losses = policy_chosen_loss + self.beta * (pol_kl_losses - ref_kl_losses)
 
         # rejected_diff = policy_rejected_logps - reference_chosen_logps
         # chosen_logps_diff_loss =  - F.logsigmoid(chosen_diff)
@@ -574,7 +580,7 @@ class MITOTrainer(DPOTrainer):
         if isinstance(target_labels, list):
             target_labels = torch.tensor(target_labels, device=target_logits.device)
 
-        with open("mitoloss.txt", "w") as f:
+        '''with open("mitoloss.txt", "w") as f:
             f.write("PRED_LOGITS: " + str(pred_logits))
             f.write("\n=================================================\n")
             f.write("TARGET_LOGITS: " + str(target_logits))
@@ -582,7 +588,7 @@ class MITOTrainer(DPOTrainer):
             f.write("PRED_LABELS: " + str(pred_labels))
             f.write("\n=================================================\n")
             f.write("TARGET_LABELS: " + str(target_labels))
-        f.close()
+        f.close()'''
         # Skip if logits are empty
         if pred_logits.size(0) == 0 or target_logits.size(0) == 0:
             raise ValueError("Empty logits detected. Check input data or tokenization.")
