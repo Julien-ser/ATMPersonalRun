@@ -942,71 +942,104 @@ class DPOTrainer(Trainer):
         reference_chosen_logps: torch.FloatTensor,
         reference_rejected_logps: torch.FloatTensor,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
-        """Compute the DPO loss with numerical safeguards."""
-        
-        # 1. Input validation
-        if torch.isnan(policy_chosen_logps).any() or torch.isnan(policy_rejected_logps).any():
-            raise ValueError("NaN detected in policy log probabilities")
-        
-        if not self.reference_free and (torch.isnan(reference_chosen_logps).any() or torch.isnan(reference_rejected_logps).any()):
-            raise ValueError("NaN detected in reference log probabilities")
+        """Compute the DPO loss for a batch of policy and reference model log probabilities.
 
-        # 2. Compute log ratios with safeguards
+        Args:
+            policy_chosen_logps: Log probabilities of the policy model for the chosen responses. Shape: (batch_size,)
+            policy_rejected_logps: Log probabilities of the policy model for the rejected responses. Shape: (batch_size,)
+            reference_chosen_logps: Log probabilities of the reference model for the chosen responses. Shape: (batch_size,)
+            reference_rejected_logps: Log probabilities of the reference model for the rejected responses. Shape: (batch_size,)
+
+        Returns:
+            A tuple of three tensors: (losses, chosen_rewards, rejected_rewards).
+            The losses tensor contains the DPO loss for each example in the batch.
+            The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
+        """
+
+        # Clamp input log probabilities to a reasonable range to avoid extreme values
+        min_logp, max_logp = -100.0, 0.0
+        policy_chosen_logps = policy_chosen_logps.clamp(min_logp, max_logp)
+        policy_rejected_logps = policy_rejected_logps.clamp(min_logp, max_logp)
+        reference_chosen_logps = reference_chosen_logps.clamp(min_logp, max_logp)
+        reference_rejected_logps = reference_rejected_logps.clamp(min_logp, max_logp)
+
+        # Debug: Check for NaNs or infs early
+        assert not torch.isnan(policy_chosen_logps).any(), "NaN in policy_chosen_logps"
+        assert not torch.isnan(policy_rejected_logps).any(), "NaN in policy_rejected_logps"
+        assert not torch.isnan(reference_chosen_logps).any(), "NaN in reference_chosen_logps"
+        assert not torch.isnan(reference_rejected_logps).any(), "NaN in reference_rejected_logps"
+
+        assert not torch.isinf(policy_chosen_logps).any(), "Inf in policy_chosen_logps"
+        assert not torch.isinf(policy_rejected_logps).any(), "Inf in policy_rejected_logps"
+        assert not torch.isinf(reference_chosen_logps).any(), "Inf in reference_chosen_logps"
+        assert not torch.isinf(reference_rejected_logps).any(), "Inf in reference_rejected_logps"
+
         pi_logratios = policy_chosen_logps - policy_rejected_logps
         if self.reference_free:
-            ref_logratios = torch.zeros_like(pi_logratios)
+            ref_logratios = torch.tensor([0], dtype=pi_logratios.dtype, device=pi_logratios.device)
         else:
             ref_logratios = reference_chosen_logps - reference_rejected_logps
-        
-        # 3. Clamp log ratios to prevent extreme values
-        max_log_ratio = 10.0  # Empirical value - adjust based on your data
-        pi_logratios = torch.clamp(pi_logratios, -max_log_ratio, max_log_ratio)
-        ref_logratios = torch.clamp(ref_logratios, -max_log_ratio, max_log_ratio)
+
+        # Move to accelerator device
+        pi_logratios = pi_logratios.to(self.accelerator.device)
+        ref_logratios = ref_logratios.to(self.accelerator.device)
 
         logits = pi_logratios - ref_logratios
-        
-        # 4. Compute loss with type-specific safeguards
+
+        # Clamp logits before sigmoid/logsigmoid to avoid NaNs from extreme values
+        logits = logits.clamp(-30, 30)
+
+        # Debug: Check logits for NaN/inf after clamping
+        assert not torch.isnan(logits).any(), "NaN in logits"
+        assert not torch.isinf(logits).any(), "Inf in logits"
+
         if self.loss_type == "sigmoid":
             losses = (
                 -F.logsigmoid(self.beta * logits) * (1 - self.label_smoothing)
                 - F.logsigmoid(-self.beta * logits) * self.label_smoothing
             )
-            # Clamp sigmoid inputs to prevent underflow
-            losses = torch.clamp(losses, min=-100, max=100)
-            
         elif self.loss_type == "hinge":
-            losses = torch.relu(1 - self.beta * logits)
-            # No need for clamping with ReLU
-            
+            # Clamp logits here too, just in case
+            hinge_input = self.beta * logits
+            hinge_input = hinge_input.clamp(-30, 30)
+            losses = torch.relu(1 - hinge_input)
         elif self.loss_type == "ipo":
-            losses = (logits - 1/(2 * self.beta)) ** 2
-            losses = torch.clamp(losses, max=100)  # Prevent extreme outliers
-            
+            # Clamp logits before IPO loss computation
+            ipo_input = logits - 1 / (2 * self.beta)
+            ipo_input = ipo_input.clamp(-30, 30)
+            losses = ipo_input ** 2
         elif self.loss_type == "kto_pair":
-            chosen_KL = (policy_chosen_logps - reference_chosen_logps).mean().clamp(min=0, max=10)
-            rejected_KL = (policy_rejected_logps - reference_rejected_logps).mean().clamp(min=0, max=10)
-            
-            chosen_logratios = (policy_chosen_logps - reference_chosen_logps).clamp(-max_log_ratio, max_log_ratio)
-            rejected_logratios = (policy_rejected_logps - reference_rejected_logps).clamp(-max_log_ratio, max_log_ratio)
-            
+            chosen_KL = (policy_chosen_logps - reference_chosen_logps).mean().clamp(min=0)
+            rejected_KL = (policy_rejected_logps - reference_rejected_logps).mean().clamp(min=0)
+
+            chosen_logratios = policy_chosen_logps - reference_chosen_logps
+            rejected_logratios = policy_rejected_logps - reference_rejected_logps
+
             losses = torch.cat(
                 (
-                    (1 - F.sigmoid(self.beta * (chosen_logratios - rejected_KL))).clamp(0, 1),
-                    (1 - F.sigmoid(self.beta * (chosen_KL - rejected_logratios))).clamp(0, 1),
+                    1 - F.sigmoid(self.beta * (chosen_logratios - rejected_KL)),
+                    1 - F.sigmoid(self.beta * (chosen_KL - rejected_logratios)),
                 ),
                 0,
             )
-        
-        # 5. Final output safeguards
-        losses = torch.clamp(losses, min=1e-5, max=1e5)  # Absolute safety bounds
-        
+        else:
+            raise ValueError(
+                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'hinge', 'ipo', 'kto_pair']"
+            )
+
         chosen_rewards = (
-            self.beta * (policy_chosen_logps - reference_chosen_logps).detach()
-        ).clamp(-10, 10)
-        
+            self.beta
+            * (
+                policy_chosen_logps.to(self.accelerator.device) - reference_chosen_logps.to(self.accelerator.device)
+            ).detach()
+        )
         rejected_rewards = (
-            self.beta * (policy_rejected_logps - reference_rejected_logps).detach()
-        ).clamp(-10, 10)
+            self.beta
+            * (
+                policy_rejected_logps.to(self.accelerator.device)
+                - reference_rejected_logps.to(self.accelerator.device)
+            ).detach()
+        )
 
         return losses, chosen_rewards, rejected_rewards
 

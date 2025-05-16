@@ -568,55 +568,63 @@ class MITOTrainer(DPOTrainer):
 
 
     def mito_loss(
-            self,
-            pred_logits,
-            target_logits,
-            pred_labels,
-            target_labels,
-        ) -> torch.FloatTensor:
-
+        self,
+        pred_logits,
+        target_logits,
+        pred_labels,
+        target_labels,
+    ) -> torch.FloatTensor:
+        # Convert lists to tensors if needed
         if isinstance(pred_labels, list):
             pred_labels = torch.tensor(pred_labels, device=pred_logits.device)
         if isinstance(target_labels, list):
             target_labels = torch.tensor(target_labels, device=target_logits.device)
 
-        '''with open("mitoloss.txt", "w") as f:
-            f.write("PRED_LOGITS: " + str(pred_logits))
-            f.write("\n=================================================\n")
-            f.write("TARGET_LOGITS: " + str(target_logits))
-            f.write("\n=================================================\n")
-            f.write("PRED_LABELS: " + str(pred_labels))
-            f.write("\n=================================================\n")
-            f.write("TARGET_LABELS: " + str(target_labels))
-        f.close()'''
-        # Skip if logits are empty
+        # Check for empty logits
         if pred_logits.size(0) == 0 or target_logits.size(0) == 0:
             raise ValueError("Empty logits detected. Check input data or tokenization.")
-    
+
         # Align dimensions of labels and logits
         if pred_labels.ndim == 1:
-            #pred_labels = pred_labels.unsqueeze(1).expand_as(pred_logits[..., 0])
             pred_labels = pred_labels.view_as(pred_logits[..., 0])
         if target_labels.ndim == 1:
-            #target_labels = target_labels.unsqueeze(1).expand_as(target_logits[..., 0])
             target_labels = target_labels.view_as(target_logits[..., 0])
 
-        # Mask logits where labels are -100
-        pred_logits = pred_logits.masked_fill(
-            (pred_labels == -100).unsqueeze(-1), torch.finfo(pred_logits.dtype).min
-        )
-        target_logits = target_logits.masked_fill(
-            (target_labels == -100).unsqueeze(-1), torch.finfo(target_logits.dtype).min
-        )
+        # Clamp logits to avoid extreme values that can cause instability
+        min_logit, max_logit = -30.0, 30.0
+        pred_logits = pred_logits.clamp(min_logit, max_logit)
+        target_logits = target_logits.clamp(min_logit, max_logit)
 
-        # Compute probabilities
+        # Mask logits where labels are -100 (ignore index)
+        ignore_mask_pred = (pred_labels == -100).unsqueeze(-1)
+        ignore_mask_target = (target_labels == -100).unsqueeze(-1)
+
+        pred_logits = pred_logits.masked_fill(ignore_mask_pred, torch.finfo(pred_logits.dtype).min)
+        target_logits = target_logits.masked_fill(ignore_mask_target, torch.finfo(target_logits.dtype).min)
+
+        # Debug assertions: Check NaNs and infs in logits
+        for tensor_name, tensor in {
+            "pred_logits": pred_logits,
+            "target_logits": target_logits,
+        }.items():
+            assert not torch.isnan(tensor).any(), f"NaN detected in {tensor_name}"
+            assert not torch.isinf(tensor).any(), f"Inf detected in {tensor_name}"
+
+        # Flatten logits for softmax and log_softmax
         tar_prob = target_logits.view(-1, target_logits.shape[-1]).contiguous()
         pred_prob = pred_logits.view(-1, pred_logits.shape[-1]).contiguous()
 
+        # Compute softmax and log_softmax safely
         tar_prob = F.softmax(tar_prob, dim=1)
         pred_prob = F.log_softmax(pred_prob, dim=1)
 
-        # Compute KL divergence
+        # Check for NaNs/Infs after softmax/log_softmax
+        assert not torch.isnan(tar_prob).any(), "NaN detected in target probabilities after softmax"
+        assert not torch.isnan(pred_prob).any(), "NaN detected in predicted log probabilities after log_softmax"
+        assert not torch.isinf(tar_prob).any(), "Inf detected in target probabilities after softmax"
+        assert not torch.isinf(pred_prob).any(), "Inf detected in predicted log probabilities after log_softmax"
+
+        # Compute KL divergence loss
         kl_loss = self.kldiv_loss(pred_prob, tar_prob)
 
         return kl_loss
