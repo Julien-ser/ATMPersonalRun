@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 import re
 from collections import Counter
+from peft import PeftModel
 
 def normalize_text(text: str) -> str:
     """Lowercase, remove punctuation, and extra whitespace."""
@@ -15,62 +16,89 @@ def normalize_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text).strip()  # Remove extra whitespace
     return text
 
-def compute_exact_match(prediction: str, ground_truth: str) -> bool:
-    """Check if the normalized prediction matches the normalized ground truth."""
-    return normalize_text(prediction) == normalize_text(ground_truth)
-
-def compute_subspan_exact_match(prediction: str, ground_truth: str) -> bool:
+def compute_subspan_exact_match(prediction: str, ground_truths: List[str]) -> bool:
     """Check if the normalized prediction is a substring of the normalized ground truth."""
-    return normalize_text(prediction) in normalize_text(ground_truth)
+    if normalize_text(prediction) == "":
+        return False
+    else:
+        return any(((normalize_text(prediction) in normalize_text(gt)) or (normalize_text(gt) in normalize_text(prediction)))for gt in ground_truths)
 
-def compute_f1(prediction: str, ground_truth: str) -> float:
-    """Compute F1 score between prediction and ground truth."""
-    pred_tokens = normalize_text(prediction).split()
-    gt_tokens = normalize_text(ground_truth).split()
-    common = Counter(pred_tokens) & Counter(gt_tokens)
-    num_same = sum(common.values())
-    
-    if num_same == 0:
-        return 0.0
-    
-    precision = num_same / len(pred_tokens)
-    recall = num_same / len(gt_tokens)
-    f1 = 2 * (precision * recall) / (precision + recall)
-    return f1
+def compute_exact_match(prediction: str, ground_truths: List[str]) -> bool:
+    """Check if the normalized prediction is a substring of the normalized ground truth."""
+    return any(normalize_text(prediction) == normalize_text(gt) for gt in ground_truths)
+
+def compute_f1(prediction: str, ground_truths: List[str]) -> float:
+    """Return the max F1 score over all ground truths."""
+    def single_f1(pred, gt):
+        pred_tokens = normalize_text(pred).split()
+        gt_tokens = normalize_text(gt).split()
+        common = Counter(pred_tokens) & Counter(gt_tokens)
+        num_same = sum(common.values())
+        if num_same == 0:
+            return 0.0
+        precision = num_same / len(pred_tokens)
+        recall = num_same / len(gt_tokens)
+        return 2 * (precision * recall) / (precision + recall)
+    return max((single_f1(prediction, gt) for gt in ground_truths), default=0.0)
 
 class MITOModelEvaluator:
-    def __init__(self, model_path: str, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
+    def __init__(self, base_model_path: str, adapter_path: str = None, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
         """
-        Initialize the evaluator with the trained model.
+        Initialize the evaluator with the trained model and optional LoRA adapter.
         
         Args:
-            model_path: Path to the saved model
+            base_model_path: Path to the base model
+            adapter_path: Optional path to the LoRA adapter checkpoint
             device: Device to run evaluation on
         """
         self.device = device
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.model = AutoModelForCausalLM.from_pretrained(model_path).to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(base_model_path)
+        
+        base_model = AutoModelForCausalLM.from_pretrained(base_model_path).to(self.device)
+        
+        if adapter_path:
+            # Load LoRA adapter on top of base model
+            self.model = PeftModel.from_pretrained(base_model, adapter_path).to(self.device)
+        else:
+            self.model = base_model
+        
         self.model.eval()
         
-        # Set padding side if not already set
+        # Set padding token if not set
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
     
-    def prepare_input(self, query: str, contexts: List[str]) -> str:
+    def prepare_input(self, query: str, contexts: List[dict]) -> str:
         """
-        Format the input for the model by combining query and contexts.
+        Formats the input using the [INST] ... [/INST] format expected by Mistral-Instruct models.
         
         Args:
-            query: The input question/query
-            contexts: List of context passages
+            query: The input question/query.
+            contexts: List of context dicts with 'text' field.
             
         Returns:
-            Formatted input string
+            Formatted input string.
         """
-        # You may need to adjust this formatting based on how your model was trained
-        context_str = "\n\n".join([f"Context {i+1}: {ctx['text']}" for i, ctx in enumerate(contexts)])
-        return f"Question: {query}\n\n{context_str}\n\nAnswer:"
-    
+        system_prompt = (
+            "<<SYS>>\n"
+            "You are a helpful assistant. Use the provided context to answer the question.\n"
+            "If the answer is not in the context, say you don't know.\n"
+            "<</SYS>>\n"
+        )
+
+        # Join all context passages
+        context_str = "\n".join([f"{ctx['text']}" for ctx in contexts])
+        
+        # Construct the full prompt
+        prompt = (
+            f"[INST] {system_prompt}"
+            f"Context:\n{context_str}\n\n"
+            f"Question: {query}\n"
+            f"Answer:"
+            f" [/INST]"
+        )
+        return prompt
+        
     def generate_response(self, input_text: str, max_length: int = 512) -> str:
         """
         Generate a response from the model given input text.
@@ -113,14 +141,15 @@ class MITOModelEvaluator:
         """
         query = example.get("query", "")
         contexts = example.get("ctxs", [])
-        ground_truth = example.get("ground_truth", "")  # Add ground truth to the dataset
-        
+        ground_truths = example.get("answers", [])
+        #ground_truth = example.get("ground_truth", "")  # Add ground truth to the dataset
         if not query or not contexts:
+            print("We got a poopy")
             return {
                 "query": query,
                 "contexts": contexts,
                 "answer": "",
-                "ground_truth": ground_truth,
+                "ground_truth": ground_truths,
                 "has_answer": False,
                 "subspan_exact_match": False,
                 "exact_match": False,
@@ -132,15 +161,15 @@ class MITOModelEvaluator:
         
         # Compute metrics
         has_answer = bool(answer.strip())
-        subspan_exact_match = compute_subspan_exact_match(answer, ground_truth)
-        exact_match = compute_exact_match(answer, ground_truth)
-        f1_score = compute_f1(answer, ground_truth)
+        subspan_exact_match = compute_subspan_exact_match(answer, ground_truths)
+        exact_match = compute_exact_match(answer, ground_truths)
+        f1_score = compute_f1(answer, ground_truths)
         
         return {
             "query": query,
             "contexts": contexts,
             "answer": answer,
-            "ground_truth": ground_truth,
+            "ground_truth": ground_truths,
             "has_answer": has_answer,
             "subspan_exact_match": subspan_exact_match,
             "exact_match": exact_match,
@@ -177,6 +206,7 @@ class MITOModelEvaluator:
                 print("\nExample Evaluation:")
                 print(f"Query: {result['query']}")
                 print(f"Answer: {result['answer']}")
+                print(f"Ground Truths: {result['ground_truth']}")
                 print(f"F1 Score: {result['f1_score']}")
                 print(f"Exact Match: {result['exact_match']}")
                 print(f"Subspan Exact Match: {result['subspan_exact_match']}")
@@ -204,8 +234,11 @@ class MITOModelEvaluator:
 
 if __name__ == "__main__":
     # Example usage
-    model_path = "/home/julien/ATM-RAG/atm_train/generator_sft/experiments/model_final"
-    evaluator = MITOModelEvaluator(model_path)
+    import warnings
+    base_model_path = "/home/julien/ATM-RAG/atm_train/generator_sft/experiments/model_final"
+    adapter_path = "/home/julien/ATM-RAG/atm_train/mito/experiments/model_final"
+    warnings.filterwarnings("ignore", message="Found missing adapter keys while loading the checkpoint")
+    evaluator = MITOModelEvaluator(base_model_path, adapter_path)
     
     # Load your evaluation data
     with open("hotpot_style.jsonl") as f:
@@ -215,9 +248,9 @@ if __name__ == "__main__":
     if isinstance(eval_data, dict):
         eval_data = [eval_data]  # Convert single example to list
     
-    evaluation_results = evaluator.evaluate_dataset(eval_data, output_file="evaluation_results.json")
+    evaluation_results = evaluator.evaluate_dataset(eval_data, output_file="mitoevaluation_results.json")
     
-    print("\nEvaluation complete. Results saved to evaluation_results.json")
+    print("\nEvaluation complete. Results saved to mitoevaluation_results.json")
     print(f"Cumulative F1 Score: {evaluation_results['cumulative_f1']:.4f}")
     print(f"Cumulative Exact Match: {evaluation_results['cumulative_exact_match']:.4f}")
     print(f"Cumulative Subspan Exact Match: {evaluation_results['cumulative_subspan_exact_match']:.4f}")

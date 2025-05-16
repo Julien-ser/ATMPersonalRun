@@ -1137,37 +1137,66 @@ class DPOTrainer(Trainer):
             The losses tensor contains the DPO loss for each example in the batch.
             The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
         """
+
+        # Clamp input log probabilities to a reasonable range to avoid extreme values
+        min_logp, max_logp = -100.0, 0.0
+        policy_chosen_logps = policy_chosen_logps.clamp(min_logp, max_logp)
+        policy_rejected_logps = policy_rejected_logps.clamp(min_logp, max_logp)
+        reference_chosen_logps = reference_chosen_logps.clamp(min_logp, max_logp)
+        reference_rejected_logps = reference_rejected_logps.clamp(min_logp, max_logp)
+
+        # Debug: Check for NaNs or infs early
+        assert not torch.isnan(policy_chosen_logps).any(), "NaN in policy_chosen_logps"
+        assert not torch.isnan(policy_rejected_logps).any(), "NaN in policy_rejected_logps"
+        assert not torch.isnan(reference_chosen_logps).any(), "NaN in reference_chosen_logps"
+        assert not torch.isnan(reference_rejected_logps).any(), "NaN in reference_rejected_logps"
+
+        assert not torch.isinf(policy_chosen_logps).any(), "Inf in policy_chosen_logps"
+        assert not torch.isinf(policy_rejected_logps).any(), "Inf in policy_rejected_logps"
+        assert not torch.isinf(reference_chosen_logps).any(), "Inf in reference_chosen_logps"
+        assert not torch.isinf(reference_rejected_logps).any(), "Inf in reference_rejected_logps"
+
         pi_logratios = policy_chosen_logps - policy_rejected_logps
         if self.reference_free:
             ref_logratios = torch.tensor([0], dtype=pi_logratios.dtype, device=pi_logratios.device)
         else:
             ref_logratios = reference_chosen_logps - reference_rejected_logps
 
+        # Move to accelerator device
         pi_logratios = pi_logratios.to(self.accelerator.device)
         ref_logratios = ref_logratios.to(self.accelerator.device)
+
         logits = pi_logratios - ref_logratios
 
-        # The beta is a temperature parameter for the DPO loss, typically something in the range of 0.1 to 0.5.
-        # We ignore the reference model as beta -> 0. The label_smoothing parameter encodes our uncertainty about the labels and
-        # calculates a conservative DPO loss.
+        # Clamp logits before sigmoid/logsigmoid to avoid NaNs from extreme values
+        logits = logits.clamp(-30, 30)
+
+        # Debug: Check logits for NaN/inf after clamping
+        assert not torch.isnan(logits).any(), "NaN in logits"
+        assert not torch.isinf(logits).any(), "Inf in logits"
+
         if self.loss_type == "sigmoid":
             losses = (
                 -F.logsigmoid(self.beta * logits) * (1 - self.label_smoothing)
                 - F.logsigmoid(-self.beta * logits) * self.label_smoothing
             )
         elif self.loss_type == "hinge":
-            losses = torch.relu(1 - self.beta * logits)
+            # Clamp logits here too, just in case
+            hinge_input = self.beta * logits
+            hinge_input = hinge_input.clamp(-30, 30)
+            losses = torch.relu(1 - hinge_input)
         elif self.loss_type == "ipo":
-            # eqn (17) of the paper where beta is the regularization parameter for the IPO loss, denoted by tau in the paper.
-            losses = (logits - 1 / (2 * self.beta)) ** 2
+            # Clamp logits before IPO loss computation
+            ipo_input = logits - 1 / (2 * self.beta)
+            ipo_input = ipo_input.clamp(-30, 30)
+            losses = ipo_input ** 2
         elif self.loss_type == "kto_pair":
-            # eqn (7) of the HALOs paper
             chosen_KL = (policy_chosen_logps - reference_chosen_logps).mean().clamp(min=0)
             rejected_KL = (policy_rejected_logps - reference_rejected_logps).mean().clamp(min=0)
 
             chosen_logratios = policy_chosen_logps - reference_chosen_logps
             rejected_logratios = policy_rejected_logps - reference_rejected_logps
-            # As described in the KTO report, the KL term for chosen (rejected) is estimated using the rejected (chosen) half.
+
             losses = torch.cat(
                 (
                     1 - F.sigmoid(self.beta * (chosen_logratios - rejected_KL)),
