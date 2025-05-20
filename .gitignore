@@ -37,6 +37,7 @@ atm_train/mito/hotpot_style.jsonl
 atm_train/mito/test.json
 atm_train/attacker_build_data/mito_merged_hot.jsonl
 atm_train/attacker_build_data/test.json
+atm_train/mito/myruns
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

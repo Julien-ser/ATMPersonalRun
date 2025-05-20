@@ -11,9 +11,10 @@
     "zero_optimization": {
         "stage": 3,
         "offload_optimizer": {
-            "device": "cpu",
+            "device": "none",
             "pin_memory": true
         },
+        "stage3_gather_16bit_weights_on_model_save": true,
         "allgather_partitions": true,
         "allgather_bucket_size": 2e8,
         "overlap_comm": true,
