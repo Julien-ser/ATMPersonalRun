@@ -73,6 +73,7 @@ class MITOModelEvaluator:
             "<<SYS>>\n"
             "You are a precise QA assistant. Answer the question **briefly and exactly** using only the given context.\n"
             "Output **only the final answer**, no explanations, no extra text, no partial sentences.\n"
+            "If the answer is a name or title, return **only the name or title**.\n"
             "If the answer is not in the context, say exactly: \"I don't know.\"\n"
             "<</SYS>>\n"
         )
@@ -127,13 +128,13 @@ class MITOModelEvaluator:
         for marker in ["[INST]", "<<SYS>>", "<</SYS>>", "[/INST]"]:
             if marker in answer:
                 answer = answer.split(marker)[0].strip()
-
+        answer = re.split(r"[\(,]|(?:\d{4})", answer)[0].strip()
         return answer
         '''input_length = inputs.input_ids.shape[1]
         generated = outputs[:, input_length:]
         return self.tokenizer.decode(generated[0], skip_special_tokens=True)'''
     
-    def evaluate_single_example(self, example: Dict, max_tokens_per_chunk: int = 256, overlap: int = 1) -> Dict:
+    def evaluate_single_example(self, example: Dict, max_tokens_per_chunk: int = 512, overlap: int = 1) -> Dict:
         query = example.get("query", "")
         contexts = example.get("ctxs", [])
         ground_truths = example.get("answers", [])
@@ -220,7 +221,6 @@ class MITOModelEvaluator:
             "f1_score": best_f1,
             "chunked_answers": chunked_answers  # Optional: keep all if debugging
         }
-
     
     def evaluate_dataset(self, data: List[Dict], output_file: str = None) -> Dict:
         """
