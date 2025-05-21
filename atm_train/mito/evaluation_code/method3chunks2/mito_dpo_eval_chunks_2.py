@@ -138,7 +138,8 @@ class MITOModelEvaluator:
         for marker in ["[INST]", "<<SYS>>", "<</SYS>>", "[/INST]"]:
             if marker in answer:
                 answer = answer.split(marker)[0].strip()
-        answer = re.split(r"[\(,]|(?:\d{4})", answer)[0].strip()
+        #answer = re.split(r"[\(,]|(?:\d{4})", answer)[0].strip()
+        answer = re.split(r"[\(<\[{,;:\|/]", answer)[0].strip()
         return answer
         '''input_length = inputs.input_ids.shape[1]
         generated = outputs[:, input_length:]
