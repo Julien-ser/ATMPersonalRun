@@ -128,7 +128,7 @@ class MITOModelEvaluator:
         for marker in ["[INST]", "<<SYS>>", "<</SYS>>", "[/INST]"]:
             if marker in answer:
                 answer = answer.split(marker)[0].strip()
-        answer = re.split(r"[\(<\[{,;:\|/]", answer)[0].strip()
+        answer = re.split(r"[\(<\[{;:\|/]", answer)[0].strip()
         return answer
         '''input_length = inputs.input_ids.shape[1]
         generated = outputs[:, input_length:]
@@ -284,16 +284,16 @@ if __name__ == "__main__":
     evaluator = MITOModelEvaluator(model_path)
     
     # Load your evaluation data
-    with open("/home/julien/ATM-RAG/atm_train/mito/wikiset.jsonl") as f:
+    with open("/home/julien/ATM-RAG/atm_train/mito/wiki_test.jsonl") as f:
         eval_data = [json.loads(line) for line in f if line.strip()]
-    
+
     # Evaluate - this could be a single example or a list
     if isinstance(eval_data, dict):
         eval_data = [eval_data]  # Convert single example to list
     
-    evaluation_results = evaluator.evaluate_dataset(eval_data, output_file="evaluation_results_basechunks_wikiset_2.json")
+    evaluation_results = evaluator.evaluate_dataset(eval_data, output_file="evaluation_results_basechunks_test_wiki.json")
     
-    print("\nEvaluation complete. Results saved to evaluation_results_basechunks_wikiset_2.json")
+    print("\nEvaluation complete. Results saved to evaluation_results_basechunks_test_wiki.json")
     print(f"Cumulative F1 Score: {evaluation_results['cumulative_f1']:.4f}")
     print(f"Cumulative Exact Match: {evaluation_results['cumulative_exact_match']:.4f}")
     print(f"Cumulative Subspan Exact Match: {evaluation_results['cumulative_subspan_exact_match']:.4f}")

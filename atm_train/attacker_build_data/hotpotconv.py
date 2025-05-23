@@ -43,8 +43,10 @@ with open(input_file, 'r') as f:
 # Read and process the JSONL file
 with open(input_file, 'r') as f:
     for i, line in tqdm(enumerate(f), desc="Processing examples", unit="example", total=500):
-        if i >= 500:
-            break  # Stop after processing 500 lines
+        if i < 502:#>= 500:
+            continue#break  # Stop after processing 500 lines
+        if i >= 1002:
+            break
         try:
             example = json.loads(line.strip())
             answer = example["answer"]
@@ -82,7 +84,7 @@ with open(input_file, 'r') as f:
             print(f"An error occurred at index {i}: {e}")
 
 # Write the processed examples to a new JSONL file
-output_path = Path("datasets/hotpot_style.jsonl")
+output_path = Path("datasets/hotpot_test.jsonl")
 output_path.parent.mkdir(parents=True, exist_ok=True)
 with open(output_path, 'w') as f:
     for line in output_list:
